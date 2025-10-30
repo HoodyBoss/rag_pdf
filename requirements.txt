@@ -1,0 +1,13 @@
+gradio
+pymupdf
+numpy
+Pillow
+chromadb
+transformers
+ollama
+shortuuid
+pythainlp
+discord.py
+flask
+line-bot-sdk
+requests
