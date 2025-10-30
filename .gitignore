@@ -12,3 +12,19 @@ data/
 
 # Virtual environments
 .venv
+
+# Environment variables and sensitive data
+.env
+.env.local
+.env.production
+.env.*.key
+*.pem
+*.key
+secrets.txt
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
