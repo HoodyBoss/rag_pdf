@@ -117,6 +117,210 @@ except Exception as e:
     collection = chroma_client.create_collection(name="pdf_data")
     logging.info(f"✅ สร้าง collection 'pdf_data' ใหม่สำเร็จ")
 
+# Feedback Database Setup
+FEEDBACK_DB_PATH = "./data/feedback.db"
+os.makedirs(os.path.dirname(FEEDBACK_DB_PATH), exist_ok=True)
+
+import sqlite3
+from datetime import datetime
+
+def init_feedback_db():
+    """สร้างฐานข้อมูล feedback ถ้ายังไม่มี"""
+    conn = sqlite3.connect(FEEDBACK_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            feedback_type TEXT NOT NULL,  -- 'good' or 'bad'
+            user_comment TEXT,
+            corrected_answer TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            model_used TEXT,
+            sources TEXT  -- JSON array of source info
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_feedback_timestamp ON feedback(timestamp)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_feedback_type ON feedback(feedback_type)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_feedback_question ON feedback(question)
+    ''')
+
+    # ตรวจสอบและเพิ่มคอลัมน์ใหม่ถ้าจำเป็น
+    try:
+        cursor.execute('ALTER TABLE feedback ADD COLUMN applied BOOLEAN DEFAULT FALSE')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_feedback_applied ON feedback(applied)')
+        logging.info("✅ Added 'applied' column to feedback table")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            logging.info("✅ 'applied' column already exists in feedback table")
+        else:
+            logging.warning(f"⚠️ Error adding 'applied' column: {str(e)}")
+
+    # ตารางสำหรับเก็บคู่คำถาม-คำตอบที่ถูกแก้ไข
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS corrected_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_question TEXT NOT NULL,
+            original_answer TEXT NOT NULL,
+            corrected_answer TEXT NOT NULL,
+            feedback_id INTEGER,
+            question_embedding TEXT,  -- embedding สำหรับการค้นหาคำถามที่คล้ายกัน
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            applied_count INTEGER DEFAULT 0,
+            FOREIGN KEY (feedback_id) REFERENCES feedback (id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_corrected_question ON corrected_answers(original_question)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_corrected_created ON corrected_answers(created_at)
+    ''')
+
+    # Tag System Tables
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            color TEXT DEFAULT '#007bff',
+            description TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS document_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id TEXT NOT NULL,  -- ChromaDB ID
+            tag_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (tag_id) REFERENCES tags (id),
+            UNIQUE(document_id, tag_id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS feedback_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            feedback_id INTEGER NOT NULL,
+            tag_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (feedback_id) REFERENCES feedback (id),
+            FOREIGN KEY (tag_id) REFERENCES tags (id),
+            UNIQUE(feedback_id, tag_id)
+        )
+    ''')
+
+    # Indexes for tag performance
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_document_tags_doc_id ON document_tags(document_id)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_document_tags_tag_id ON document_tags(tag_id)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_feedback_tags_feedback_id ON feedback_tags(feedback_id)
+    ''')
+
+    # Insert default tags if empty
+    cursor.execute("SELECT COUNT(*) FROM tags")
+    if cursor.fetchone()[0] == 0:
+        default_tags = [
+            ('ทั่วไป', '#6c757d', 'คำถามทั่วไป'),
+            ('เทคนิค', '#007bff', 'คำถามด้านเทคนิค'),
+            ('การใช้งาน', '#28a745', 'คำถามเกี่ยวกับการใช้งาน'),
+            ('ปัญหา', '#dc3545', 'คำถามเกี่ยวกับปัญหา'),
+            ('ข้อมูล', '#17a2b8', 'คำถามเกี่ยวกับข้อมูล'),
+            ('สอบถาม', '#ffc107', 'คำถามเพื่อสอบถามข้อมูล'),
+            ('แก้ไข', '#fd7e14', 'คำถามที่ต้องการแก้ไข'),
+            ('สำคัญ', '#e83e8c', 'คำถามสำคัญ')
+        ]
+
+        cursor.executemany('''
+            INSERT INTO tags (name, color, description) VALUES (?, ?, ?)
+        ''', default_tags)
+        logging.info("✅ Created default tags")
+
+    # Enhanced Memory System Tables
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS session_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            user_id TEXT DEFAULT 'default',
+            question TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            question_embedding BLOB,  -- Store as bytes
+            contexts TEXT,  -- JSON array
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            relevance_score REAL DEFAULT 0.0
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rag_performance_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            rag_mode TEXT,  -- 'standard' or 'enhanced'
+            question TEXT,
+            response_time REAL,  -- milliseconds
+            context_count INTEGER,
+            memory_hit BOOLEAN,
+            success BOOLEAN,
+            error_message TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS context_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_hash TEXT UNIQUE NOT NULL,
+            question TEXT NOT NULL,
+            contexts TEXT,  -- JSON array of cached contexts
+            embedding BLOB,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            access_count INTEGER DEFAULT 1
+        )
+    ''')
+
+    # Indexes for performance
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_session_memory_session ON session_memory(session_id)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_session_memory_timestamp ON session_memory(timestamp)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_rag_performance_session ON rag_performance_log(session_id)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_context_cache_hash ON context_cache(question_hash)
+    ''')
+
+    conn.commit()
+    conn.close()
+    logging.info("✅ Feedback database initialized with learning, tag, and enhanced memory features")
+
+# Initialize feedback database
+init_feedback_db()
+
 # ตั้งค่า device
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 logging.info(f"Using device: {device}")
@@ -971,8 +1175,18 @@ class EnhancedRAG:
         }
 
 
-# Global Enhanced RAG instance
-enhanced_rag = EnhancedRAG()
+# Global Enhanced RAG instances
+enhanced_rag = EnhancedRAG()  # Legacy for backward compatibility
+
+# Initialize RAG Manager after class definition
+rag_manager = None
+
+def initialize_rag_manager():
+    """Initialize RAG Manager after all classes are defined"""
+    global rag_manager
+    if rag_manager is None:
+        rag_manager = RAGManager()
+    return rag_manager
 
 
 def process_pdf_upload(pdf_file):
@@ -2472,6 +2686,1209 @@ def user(user_message: str, history: List[Dict]) -> Tuple[str, List[Dict]]:
     """
     return "", history + [{"role": "user", "content": user_message}]
 
+
+# ==================== FEEDBACK FUNCTIONS ====================
+
+def save_feedback(question: str, answer: str, feedback_type: str, user_comment: str = "",
+                  corrected_answer: str = "", model_used: str = "", sources: str = ""):
+    """บันทึก feedback ลงฐานข้อมูล"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            INSERT INTO feedback (question, answer, feedback_type, user_comment, corrected_answer, model_used, sources)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (question, answer, feedback_type, user_comment, corrected_answer, model_used, sources))
+
+        feedback_id = cursor.lastrowid
+
+        # ถ้ามีคำตอบที่ถูกแก้ไข ให้บันทึกลงตาราง corrected_answers
+        if feedback_type == "bad" and corrected_answer and corrected_answer.strip():
+            try:
+                # สร้าง embedding สำหรับคำถาม (เพื่อค้นหาคำถามที่คล้ายกัน)
+                question_embedding = sentence_model.encode(question, convert_to_tensor=True).cpu().numpy()
+                embedding_str = json.dumps(question_embedding.tolist())
+
+                cursor.execute('''
+                    INSERT INTO corrected_answers (original_question, original_answer, corrected_answer, feedback_id, question_embedding)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (question, answer, corrected_answer, feedback_id, embedding_str))
+
+                logging.info(f"✅ Saved corrected answer for learning: {question[:50]}...")
+
+            except Exception as e:
+                logging.warning(f"⚠️ Failed to create embedding for corrected answer: {str(e)}")
+
+        conn.commit()
+        conn.close()
+
+        logging.info(f"✅ Saved {feedback_type} feedback for question: {question[:50]}...")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Failed to save feedback: {str(e)}")
+        return False
+
+
+def find_similar_corrected_answer(question: str, threshold: float = 0.8) -> dict:
+    """ค้นหาคำตอบที่ถูกแก้ไขสำหรับคำถามที่คล้ายกัน"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT original_question, original_answer, corrected_answer, question_embedding, applied_count
+            FROM corrected_answers
+            ORDER BY created_at DESC
+        ''')
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            return None
+
+        # สร้าง embedding สำหรับคำถามปัจจุบัน
+        question_embedding = sentence_model.encode(question, convert_to_tensor=True).cpu().numpy()
+
+        best_match = None
+        best_similarity = 0
+
+        for row in rows:
+            try:
+                stored_embedding = json.loads(row[3])
+                stored_embedding = np.array(stored_embedding)
+
+                # คำนวณ cosine similarity
+                similarity = np.dot(question_embedding, stored_embedding) / (
+                    np.linalg.norm(question_embedding) * np.linalg.norm(stored_embedding)
+                )
+
+                if similarity > threshold and similarity > best_similarity:
+                    best_match = {
+                        'original_question': row[0],
+                        'original_answer': row[1],
+                        'corrected_answer': row[2],
+                        'similarity': similarity,
+                        'applied_count': row[4]
+                    }
+                    best_similarity = similarity
+
+            except Exception as e:
+                logging.warning(f"⚠️ Error processing embedding: {str(e)}")
+                continue
+
+        return best_match
+
+    except Exception as e:
+        logging.error(f"❌ Failed to find similar corrected answer: {str(e)}")
+        return None
+
+
+def increment_corrected_answer_usage(original_question: str) -> bool:
+    """เพิ่มจำนวนครั้งที่คำตอบที่ถูกแก้ไขถูกนำไปใช้"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            UPDATE corrected_answers
+            SET applied_count = applied_count + 1
+            WHERE original_question = ?
+        ''', (original_question,))
+
+        # อัปเดต feedback table ให้ applied = TRUE
+        cursor.execute('''
+            UPDATE feedback
+            SET applied = TRUE
+            WHERE question = ? AND corrected_answer != '' AND corrected_answer IS NOT NULL
+        ''', (original_question,))
+
+        conn.commit()
+        conn.close()
+
+        logging.info(f"✅ Incremented usage count for corrected answer: {original_question[:50]}...")
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Failed to increment corrected answer usage: {str(e)}")
+        return False
+
+
+def get_learning_stats():
+    """ดึงสถิติการเรียนรู้"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        # จำนวนคำตอบที่ถูกแก้ไขทั้งหมด
+        cursor.execute("SELECT COUNT(*) FROM corrected_answers")
+        total_corrected = cursor.fetchone()[0]
+
+        # จำนวนคำตอบที่ถูกนำไปใช้
+        cursor.execute("SELECT COUNT(*) FROM corrected_answers WHERE applied_count > 0")
+        used_corrected = cursor.fetchone()[0]
+
+        # จำนวน feedback ทั้งหมด
+        cursor.execute("SELECT COUNT(*) FROM feedback")
+        total_feedback = cursor.fetchone()[0]
+
+        # จำนวน feedback ที่ถูกแก้ไข
+        cursor.execute("SELECT COUNT(*) FROM feedback WHERE corrected_answer != '' AND corrected_answer IS NOT NULL")
+        corrected_feedback = cursor.fetchone()[0]
+
+        # คำตอบที่ถูกใช้บ่อยที่สุด
+        cursor.execute('''
+            SELECT original_question, applied_count
+            FROM corrected_answers
+            WHERE applied_count > 0
+            ORDER BY applied_count DESC
+            LIMIT 5
+        ''')
+        most_used = cursor.fetchall()
+
+        conn.close()
+
+        return {
+            'total_corrected': total_corrected,
+            'used_corrected': used_corrected,
+            'total_feedback': total_feedback,
+            'corrected_feedback': corrected_feedback,
+            'learning_rate': (used_corrected / total_corrected * 100) if total_corrected > 0 else 0,
+            'most_used': most_used
+        }
+
+    except Exception as e:
+        logging.error(f"❌ Failed to get learning stats: {str(e)}")
+        return {
+            'total_corrected': 0, 'used_corrected': 0, 'total_feedback': 0,
+            'corrected_feedback': 0, 'learning_rate': 0, 'most_used': []
+        }
+
+# Tag Management Functions
+def create_tag(name: str, color: str = '#007bff', description: str = '') -> bool:
+    """สร้าง tag ใหม่"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            INSERT INTO tags (name, color, description) VALUES (?, ?, ?)
+        ''', (name, color, description))
+
+        conn.commit()
+        conn.close()
+        logging.info(f"✅ Created tag: {name}")
+        return True
+
+    except sqlite3.IntegrityError:
+        logging.warning(f"⚠️ Tag '{name}' already exists")
+        return False
+    except Exception as e:
+        logging.error(f"❌ Failed to create tag: {str(e)}")
+        return False
+
+def get_all_tags() -> list:
+    """ดึง tags ทั้งหมด"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT id, name, color, description, created_at
+            FROM tags
+            ORDER BY name
+        ''')
+
+        tags = cursor.fetchall()
+        conn.close()
+        return tags
+
+    except Exception as e:
+        logging.error(f"❌ Failed to get tags: {str(e)}")
+        return []
+
+def tag_document(document_id: str, tag_id: int) -> bool:
+    """กำหนด tag ให้เอกสาร"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)
+        ''', (document_id, tag_id))
+
+        conn.commit()
+        conn.close()
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Failed to tag document: {str(e)}")
+        return False
+
+def tag_feedback(feedback_id: int, tag_id: int) -> bool:
+    """กำหนด tag ให้ feedback"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            INSERT OR IGNORE INTO feedback_tags (feedback_id, tag_id) VALUES (?, ?)
+        ''', (feedback_id, tag_id))
+
+        conn.commit()
+        conn.close()
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Failed to tag feedback: {str(e)}")
+        return False
+
+def get_documents_by_tag(tag_id: int) -> list:
+    """ดึงเอกสารตาม tag"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT DISTINCT dt.document_id
+            FROM document_tags dt
+            WHERE dt.tag_id = ?
+        ''', (tag_id,))
+
+        document_ids = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return document_ids
+
+    except Exception as e:
+        logging.error(f"❌ Failed to get documents by tag: {str(e)}")
+        return []
+
+def get_feedback_by_tag(tag_id: int) -> list:
+    """ดึง feedback ตาม tag"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT f.id, f.question, f.answer, f.feedback_type, f.timestamp, f.user_comment
+            FROM feedback f
+            JOIN feedback_tags ft ON f.id = ft.feedback_id
+            WHERE ft.tag_id = ?
+            ORDER BY f.timestamp DESC
+        ''', (tag_id,))
+
+        feedback = cursor.fetchall()
+        conn.close()
+        return feedback
+
+    except Exception as e:
+        logging.error(f"❌ Failed to get feedback by tag: {str(e)}")
+        return []
+
+def search_documents_by_tags(tag_ids: list) -> list:
+    """ค้นหาเอกสารตามหลาย tags (AND logic)"""
+    try:
+        if not tag_ids:
+            return []
+
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        # Build dynamic query for AND logic
+        placeholders = ','.join(['?' for _ in tag_ids])
+        query = f'''
+            SELECT dt.document_id, COUNT(*) as match_count
+            FROM document_tags dt
+            WHERE dt.tag_id IN ({placeholders})
+            GROUP BY dt.document_id
+            HAVING match_count = ?
+        '''
+
+        cursor.execute(query, tag_ids + [len(tag_ids)])
+        document_ids = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return document_ids
+
+    except Exception as e:
+        logging.error(f"❌ Failed to search documents by tags: {str(e)}")
+        return []
+
+def delete_tag(tag_id: int) -> bool:
+    """ลบ tag"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        # Delete from junction tables first (foreign key constraints)
+        cursor.execute('DELETE FROM document_tags WHERE tag_id = ?', (tag_id,))
+        cursor.execute('DELETE FROM feedback_tags WHERE tag_id = ?', (tag_id,))
+
+        # Delete the tag
+        cursor.execute('DELETE FROM tags WHERE id = ?', (tag_id,))
+
+        conn.commit()
+        conn.close()
+        logging.info(f"✅ Deleted tag: {tag_id}")
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Failed to delete tag: {str(e)}")
+        return False
+
+def get_tag_stats() -> dict:
+    """ดึงสถิติการใช้งาน tags"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        # Most used tags
+        cursor.execute('''
+            SELECT t.name, COUNT(dt.id) as usage_count
+            FROM tags t
+            LEFT JOIN document_tags dt ON t.id = dt.tag_id
+            GROUP BY t.id, t.name
+            ORDER BY usage_count DESC
+            LIMIT 10
+        ''')
+
+        most_used_tags = cursor.fetchall()
+
+        # Tags with feedback
+        cursor.execute('''
+            SELECT t.name, COUNT(ft.id) as feedback_count
+            FROM tags t
+            LEFT JOIN feedback_tags ft ON t.id = ft.tag_id
+            GROUP BY t.id, t.name
+            ORDER BY feedback_count DESC
+            LIMIT 10
+        ''')
+
+        feedback_tags = cursor.fetchall()
+
+        conn.close()
+
+        return {
+            'most_used_tags': most_used_tags,
+            'feedback_tags': feedback_tags
+        }
+
+    except Exception as e:
+        logging.error(f"❌ Failed to get tag stats: {str(e)}")
+        return {
+            'most_used_tags': [],
+            'feedback_tags': []
+        }
+
+# Tag UI Helper Functions
+def refresh_tags_list():
+    """รีเฟรชรายการ tags"""
+    try:
+        tags = get_all_tags()
+        tag_choices = [(f"🏷️ {tag[1]}", tag[0]) for tag in tags]
+        tag_data = [[tag[0], tag[1], tag[2], tag[3] or "", tag[4]] for tag in tags]
+        return tag_data, tag_choices, gr.HTML(""), ""
+    except Exception as e:
+        logging.error(f"❌ Failed to refresh tags: {str(e)}")
+        return [], [], gr.HTML(f'<div style="color: red;">❌ เกิดข้อผิดพลาด: {str(e)}</div>'), ""
+
+def create_new_tag(name: str, color: str, description: str):
+    """สร้าง tag ใหม่"""
+    if not name.strip():
+        return [], [], gr.HTML('<div style="color: orange;">⚠️ กรุณาใส่ชื่อ Tag</div>'), ""
+
+    try:
+        success = create_tag(name.strip(), color, description.strip())
+        if success:
+            return refresh_tags_list()
+        else:
+            return [], [], gr.HTML('<div style="color: orange;">⚠️ Tag นี้มีอยู่แล้ว</div>'), ""
+    except Exception as e:
+        logging.error(f"❌ Failed to create tag: {str(e)}")
+        return [], [], gr.HTML(f'<div style="color: red;">❌ ไม่สามารถสร้าง Tag ได้: {str(e)}</div>'), ""
+
+def delete_selected_tag(selected_row: dict):
+    """ลบ tag ที่เลือก"""
+    try:
+        if not selected_row or not selected_row.get("ID"):
+            return [], [], gr.HTML('<div style="color: orange;">⚠️ กรุณาเลือก Tag ที่จะลบ</div>'), ""
+
+        tag_id = selected_row["ID"]
+        tag_name = selected_row.get("ชื่อ Tag", "")
+
+        success = delete_tag(tag_id)
+        if success:
+            tag_data, tag_choices, _, _ = refresh_tags_list()
+            return tag_data, tag_choices, gr.HTML(f'<div style="color: green;">✅ ลบ Tag "{tag_name}" สำเร็จ</div>'), ""
+        else:
+            return [], [], gr.HTML('<div style="color: red;">❌ ไม่สามารถลบ Tag ได้</div>'), ""
+    except Exception as e:
+        logging.error(f"❌ Failed to delete tag: {str(e)}")
+        return [], [], gr.HTML(f'<div style="color: red;">❌ เกิดข้อผิดพลาด: {str(e)}</div>'), ""
+
+def update_tag_statistics():
+    """อัปเดตสถิติ tags"""
+    try:
+        stats = get_tag_stats()
+        popular_data = [[tag[0], tag[1]] for tag in stats['most_used_tags']]
+        feedback_data = [[tag[0], tag[1]] for tag in stats['feedback_tags']]
+        return popular_data, feedback_data
+    except Exception as e:
+        logging.error(f"❌ Failed to update tag stats: {str(e)}")
+        return [], []
+
+def search_documents_by_selected_tags(selected_tags: list):
+    """ค้นหาเอกสารตาม tags ที่เลือก"""
+    try:
+        if not selected_tags:
+            return [], gr.HTML('<div style="color: orange;">⚠️ กรุณาเลือกอย่างน้อย 1 Tag</div>')
+
+        # Extract tag IDs from selected labels
+        tags = get_all_tags()
+        tag_id_map = {f"🏷️ {tag[1]}": tag[0] for tag in tags}
+        selected_tag_ids = [tag_id_map[tag] for tag in selected_tags if tag in tag_id_map]
+
+        if not selected_tag_ids:
+            return [], gr.HTML('<div style="color: orange;">⚠️ ไม่พบ Tags ที่เลือก</div>')
+
+        document_ids = search_documents_by_tags(selected_tag_ids)
+
+        if not document_ids:
+            return [], gr.HTML('<div style="color: blue;">ℹ️ ไม่พบเอกสารที่ตรงกับ Tags ที่เลือก</div>')
+
+        # Get content preview from ChromaDB
+        search_data = []
+        for doc_id in document_ids[:20]:  # Limit to 20 results
+            try:
+                result = collection.get(ids=[doc_id])
+                if result['documents']:
+                    content = result['documents'][0][:100] + "..." if len(result['documents'][0]) > 100 else result['documents'][0]
+                    search_data.append([doc_id, content])
+            except:
+                search_data.append([doc_id, "ไม่สามารถโหลดเนื้อหาได้"])
+
+        status = gr.HTML(f'<div style="color: green;">✅ พบ {len(search_data)} เอกสาร</div>')
+        return search_data, status
+    except Exception as e:
+        logging.error(f"❌ Failed to search by tags: {str(e)}")
+        return [], gr.HTML(f'<div style="color: red;">❌ เกิดข้อผิดพลาด: {str(e)}</div>')
+
+def load_feedback_by_selected_tag(tag_label: str):
+    """โหลด feedback ตาม tag ที่เลือก"""
+    try:
+        if not tag_label:
+            return [], gr.HTML('<div style="color: orange;">⚠️ กรุณาเลือก Tag</div>')
+
+        # Get tag ID from label
+        tags = get_all_tags()
+        tag_id_map = {f"🏷️ {tag[1]}": tag[0] for tag in tags}
+        tag_id = tag_id_map.get(tag_label)
+
+        if not tag_id:
+            return [], gr.HTML('<div style="color: orange;">⚠️ ไม่พบ Tag ที่เลือก</div>')
+
+        feedback_list = get_feedback_by_tag(tag_id)
+
+        if not feedback_list:
+            return [], gr.HTML('<div style="color: blue;">ℹ️ ไม่มี Feedback สำหรับ Tag นี้</div>')
+
+        # Format feedback data
+        feedback_data = []
+        for fb in feedback_list:
+            question = fb[1][:50] + "..." if len(fb[1]) > 50 else fb[1]
+            answer = fb[2][:100] + "..." if len(fb[2]) > 100 else fb[2]
+            feedback_data.append([fb[0], question, answer, fb[3], fb[4], fb[5] or ""])
+
+        status = gr.HTML(f'<div style="color: green;">✅ พบ {len(feedback_data)} Feedback</div>')
+        return feedback_data, status
+    except Exception as e:
+        logging.error(f"❌ Failed to load feedback by tag: {str(e)}")
+        return [], gr.HTML(f'<div style="color: red;">❌ เกิดข้อผิดพลาด: {str(e)}</div>')
+
+# Enhanced RAG System Classes
+import time
+import json
+import pickle
+
+class PerformanceMonitor:
+    """Monitor RAG performance and log metrics"""
+
+    @staticmethod
+    def log_performance(session_id: str, rag_mode: str, question: str, response_time: float,
+                       context_count: int, memory_hit: bool, success: bool, error_message: str = None):
+        """Log performance metrics"""
+        try:
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                INSERT INTO rag_performance_log
+                (session_id, rag_mode, question, response_time, context_count, memory_hit, success, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (session_id, rag_mode, question, response_time, context_count, memory_hit, success, error_message))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logging.error(f"❌ Failed to log performance: {str(e)}")
+
+    @staticmethod
+    def get_performance_stats(rag_mode: str = None, limit: int = 100):
+        """Get performance statistics"""
+        try:
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            query = "SELECT * FROM rag_performance_log"
+            params = []
+
+            if rag_mode:
+                query += " WHERE rag_mode = ?"
+                params.append(rag_mode)
+
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            conn.close()
+
+            return results
+        except Exception as e:
+            logging.error(f"❌ Failed to get performance stats: {str(e)}")
+            return []
+
+class ContextCache:
+    """Cache contexts for improved performance"""
+
+    @staticmethod
+    def _get_question_hash(question: str) -> str:
+        """Generate hash for question"""
+        import hashlib
+        return hashlib.md5(question.encode()).hexdigest()
+
+    @staticmethod
+    def get_cached_contexts(question: str) -> list:
+        """Get cached contexts for question"""
+        try:
+            question_hash = ContextCache._get_question_hash(question)
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT contexts, access_count FROM context_cache
+                WHERE question_hash = ?
+            ''', (question_hash,))
+
+            result = cursor.fetchone()
+
+            if result:
+                # Update access count
+                cursor.execute('''
+                    UPDATE context_cache
+                    SET access_count = access_count + 1
+                    WHERE question_hash = ?
+                ''', (question_hash,))
+                conn.commit()
+
+                conn.close()
+                return json.loads(result[0]) if result[0] else []
+
+            conn.close()
+            return None
+        except Exception as e:
+            logging.error(f"❌ Failed to get cached contexts: {str(e)}")
+            return None
+
+    @staticmethod
+    def cache_contexts(question: str, contexts: list, question_embedding):
+        """Cache contexts for question"""
+        try:
+            question_hash = ContextCache._get_question_hash(question)
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            embedding_bytes = pickle.dumps(question_embedding)
+            contexts_json = json.dumps(contexts)
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO context_cache
+                (question_hash, question, contexts, embedding, access_count)
+                VALUES (?, ?, ?, ?, 1)
+            ''', (question_hash, question, contexts_json, embedding_bytes))
+
+            conn.commit()
+            conn.close()
+            logging.info(f"✅ Cached contexts for question: {question[:50]}...")
+        except Exception as e:
+            logging.error(f"❌ Failed to cache contexts: {str(e)}")
+
+class ImprovedStandardRAG:
+    """Improved Standard RAG with memory and fallback"""
+
+    def __init__(self, cache_size: int = 50):
+        self.cache_size = cache_size
+        self.question_cache = {}  # Simple in-memory cache
+        self.fallback_responses = [
+            "ขอโทษครับ ฉันไม่พบข้อมูลที่เกี่ยวข้องในเอกสารที่อัปโหลดไว้",
+            "ตามเอกสารที่มีอยู่ ไม่พบข้อมูลเกี่ยวกับเรื่องนี้ครับ",
+            "ฉันไม่สามารถตอบคำถามนี้จากเอกสารที่มีอยู่ได้ครับ"
+        ]
+
+    def get_similar_questions(self, question: str, limit: int = 3) -> list:
+        """Get similar questions from database (improved memory)"""
+        try:
+            question_embedding = embed_text(question)
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            # Get recent questions with embeddings
+            cursor.execute('''
+                SELECT question, answer, question_embedding, relevance_score
+                FROM session_memory
+                WHERE question_embedding IS NOT NULL
+                ORDER BY timestamp DESC
+                LIMIT 50
+            ''')
+
+            results = cursor.fetchall()
+            similar_questions = []
+
+            for row in results:
+                stored_embedding = pickle.loads(row[2])
+
+                # Proper cosine similarity calculation
+                similarity = self._cosine_similarity(question_embedding, stored_embedding)
+
+                if similarity > 0.7:  # Threshold for similarity
+                    similar_questions.append({
+                        'question': row[0],
+                        'answer': row[1],
+                        'similarity': similarity,
+                        'relevance_score': row[3]
+                    })
+
+            # Sort by similarity and return top results
+            similar_questions.sort(key=lambda x: x['similarity'], reverse=True)
+            conn.close()
+
+            return similar_questions[:limit]
+        except Exception as e:
+            logging.error(f"❌ Failed to get similar questions: {str(e)}")
+            return []
+
+    def _cosine_similarity(self, a, b):
+        """Calculate proper cosine similarity"""
+        import numpy as np
+        dot_product = np.dot(a, b)
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+
+        if norm_a == 0 or norm_b == 0:
+            return 0
+
+        return dot_product / (norm_a * norm_b)
+
+    def get_fallback_answer(self, question: str) -> str:
+        """Get fallback answer when no context found"""
+        try:
+            # Try to find similar questions first
+            similar = self.get_similar_questions(question)
+            if similar:
+                return f"พบคำถามที่คล้ายกัน: {similar[0]['question']}\nคำตอบ: {similar[0]['answer']}"
+
+            # Return generic fallback
+            import random
+            return random.choice(self.fallback_responses)
+        except Exception as e:
+            logging.error(f"❌ Failed to get fallback answer: {str(e)}")
+            return "ขอโทษครับ เกิดข้อผิดพลาดในการประมวลผล"
+
+    def save_to_memory(self, session_id: str, question: str, answer: str, contexts: list):
+        """Save conversation to memory database"""
+        try:
+            question_embedding = embed_text(question)
+            embedding_bytes = pickle.dumps(question_embedding)
+            contexts_json = json.dumps(contexts[:3])  # Save top 3 contexts
+
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                INSERT INTO session_memory
+                (session_id, question, answer, question_embedding, contexts, relevance_score)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (session_id, question, answer, embedding_bytes, contexts_json, 1.0))
+
+            conn.commit()
+            conn.close()
+            logging.info(f"✅ Saved to memory: {question[:50]}...")
+        except Exception as e:
+            logging.error(f"❌ Failed to save to memory: {str(e)}")
+
+class ImprovedEnhancedRAG:
+    """Improved Enhanced RAG with proper similarity and persistence"""
+
+    def __init__(self):
+        self.session_memory = deque(maxlen=MEMORY_WINDOW_SIZE)
+        self.conversation_history = []
+        self.current_session_id = self._generate_session_id()
+        self.performance_monitor = PerformanceMonitor()
+
+    def _generate_session_id(self) -> str:
+        """Generate unique session ID with better collision resistance"""
+        timestamp = datetime.now().isoformat()
+        random_str = str(time.time())[-6:]  # Add random component
+        combined = f"{timestamp}_{random_str}"
+        session_hash = hashlib.sha256(combined.encode()).hexdigest()[:12]
+        return f"enhanced_session_{session_hash}"
+
+    def get_relevant_memory(self, current_question: str, threshold: float = 0.75) -> list:
+        """Get relevant memory with proper cosine similarity"""
+        if not ENABLE_SESSION_MEMORY:
+            return []
+
+        try:
+            start_time = time.time()
+            current_embedding = embed_text(current_question)
+            relevant_memories = []
+
+            # Try database first
+            db_memories = self._get_database_memories(current_embedding, threshold)
+            if db_memories:
+                relevant_memories.extend(db_memories)
+
+            # Add in-memory results if needed
+            if len(relevant_memories) < 3:
+                memory_memories = self._get_in_memory_memories(current_embedding, threshold)
+                relevant_memories.extend(memory_memories)
+
+            # Sort by similarity and return top results
+            relevant_memories.sort(key=lambda x: x['similarity'], reverse=True)
+            result = relevant_memories[:5]  # Return top 5 instead of 3
+
+            response_time = (time.time() - start_time) * 1000
+            self.performance_monitor.log_performance(
+                self.current_session_id, "enhanced", current_question,
+                response_time, 0, True, True
+            )
+
+            return result
+        except Exception as e:
+            logging.error(f"❌ Failed to get relevant memory: {str(e)}")
+            return []
+
+    def _get_database_memories(self, current_embedding, threshold: float) -> list:
+        """Get memories from database with proper similarity"""
+        try:
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            # Get recent memories from database
+            cursor.execute('''
+                SELECT question, answer, question_embedding, contexts
+                FROM session_memory
+                WHERE question_embedding IS NOT NULL
+                ORDER BY timestamp DESC
+                LIMIT 100
+            ''')
+
+            results = cursor.fetchall()
+            db_memories = []
+
+            for row in results:
+                stored_embedding = pickle.loads(row[2])
+
+                # Proper cosine similarity
+                similarity = self._cosine_similarity(current_embedding, stored_embedding)
+
+                if similarity > threshold:
+                    contexts = json.loads(row[3]) if row[3] else []
+                    db_memories.append({
+                        'question': row[0],
+                        'answer': row[1],
+                        'similarity': similarity,
+                        'contexts': contexts,
+                        'source': 'database'
+                    })
+
+            conn.close()
+            return db_memories
+        except Exception as e:
+            logging.error(f"❌ Failed to get database memories: {str(e)}")
+            return []
+
+    def _get_in_memory_memories(self, current_embedding, threshold: float) -> list:
+        """Get memories from in-memory deque"""
+        memories = []
+
+        for memory_entry in self.session_memory:
+            memory_question = memory_entry["question"]
+            memory_embedding = embed_text(memory_question)
+
+            # Proper cosine similarity
+            similarity = self._cosine_similarity(current_embedding, memory_embedding)
+
+            if similarity > threshold:
+                memories.append({
+                    'question': memory_question,
+                    'answer': memory_entry["answer"],
+                    'similarity': similarity,
+                    'contexts': memory_entry["contexts"],
+                    'source': 'memory'
+                })
+
+        return memories
+
+    def _cosine_similarity(self, a, b):
+        """Calculate proper cosine similarity"""
+        import numpy as np
+        dot_product = np.dot(a, b)
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+
+        if norm_a == 0 or norm_b == 0:
+            return 0
+
+        return dot_product / (norm_a * norm_b)
+
+    def add_to_memory(self, session_id: str, question: str, answer: str, contexts: list):
+        """Add conversation to both memory and database"""
+        memory_entry = {
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat(),
+            "question": question,
+            "answer": answer,
+            "contexts": contexts[:3]
+        }
+
+        self.session_memory.append(memory_entry)
+
+        # Also save to database for persistence
+        self._save_to_database(session_id, question, answer, contexts)
+
+        # Add to conversation history
+        self.conversation_history.extend([
+            {"role": "user", "content": question, "timestamp": memory_entry["timestamp"]},
+            {"role": "assistant", "content": answer, "timestamp": memory_entry["timestamp"]}
+        ])
+
+    def _save_to_database(self, session_id: str, question: str, answer: str, contexts: list):
+        """Save to database for persistence"""
+        try:
+            question_embedding = embed_text(question)
+            embedding_bytes = pickle.dumps(question_embedding)
+            contexts_json = json.dumps(contexts[:3])
+
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                INSERT INTO session_memory
+                (session_id, question, answer, question_embedding, contexts, relevance_score)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (session_id, question, answer, embedding_bytes, contexts_json, 1.0))
+
+            conn.commit()
+            conn.close()
+            logging.info(f"✅ Enhanced RAG: Saved to database - {question[:50]}...")
+        except Exception as e:
+            logging.error(f"❌ Enhanced RAG: Failed to save to database - {str(e)}")
+
+class RAGManager:
+    """Main RAG Manager that handles both standard and enhanced modes"""
+
+    def __init__(self):
+        self.standard_rag = ImprovedStandardRAG()
+        self.enhanced_rag = ImprovedEnhancedRAG()
+        self.context_cache = ContextCache()
+        self.performance_monitor = PerformanceMonitor()
+        self.current_session_id = self._generate_session_id()
+
+    def _generate_session_id(self) -> str:
+        """Generate session ID"""
+        timestamp = datetime.now().isoformat()
+        session_hash = hashlib.md5(timestamp.encode()).hexdigest()[:8]
+        return f"rag_session_{session_hash}"
+
+    def query(self, question: str, rag_mode: str = "enhanced", chat_llm: str = "gemma3:latest",
+              show_source: bool = False, formal_style: bool = False):
+        """Main query function that handles both modes"""
+        start_time = time.time()
+
+        try:
+            # Check cache first
+            cached_contexts = self.context_cache.get_cached_contexts(question)
+            if cached_contexts:
+                logging.info(f"✅ Cache hit for question: {question[:50]}...")
+                # Use cached contexts but still process with LLM
+                contexts = cached_contexts
+                memory_hit = True
+            else:
+                memory_hit = False
+                contexts = self._retrieve_contexts(question)
+
+                # Cache the contexts for future use
+                if contexts:
+                    question_embedding = embed_text(question)
+                    self.context_cache.cache_contexts(question, contexts, question_embedding)
+
+            # Get relevant memories for enhanced mode
+            relevant_memories = []
+            if rag_mode == "enhanced":
+                relevant_memories = self.enhanced_rag.get_relevant_memory(question)
+                logging.info(f"Found {len(relevant_memories)} relevant memories")
+
+            # Generate response
+            response_generator = self._generate_response(
+                question, contexts, relevant_memories, rag_mode,
+                chat_llm, show_source, formal_style
+            )
+
+            # Save to memory
+            if rag_mode == "enhanced":
+                self.enhanced_rag.add_to_memory(
+                    self.current_session_id, question, "", contexts
+                )
+            else:
+                self.standard_rag.save_to_memory(
+                    self.current_session_id, question, "", contexts
+                )
+
+            # Log performance
+            response_time = (time.time() - start_time) * 1000
+            self.performance_monitor.log_performance(
+                self.current_session_id, rag_mode, question,
+                response_time, len(contexts), memory_hit, True
+            )
+
+            return response_generator
+
+        except Exception as e:
+            error_msg = f"❌ RAG Query failed: {str(e)}"
+            logging.error(error_msg)
+
+            # Log performance error
+            response_time = (time.time() - start_time) * 1000
+            self.performance_monitor.log_performance(
+                self.current_session_id, rag_mode, question,
+                response_time, 0, memory_hit, False, str(e)
+            )
+
+            # Return fallback response
+            if rag_mode == "standard":
+                fallback = self.standard_rag.get_fallback_answer(question)
+            else:
+                fallback = "ขอโทษครับ เกิดข้อผิดพลาดในระบบ Enhanced RAG กรุณาลองใหม่"
+
+            def fallback_generator():
+                yield fallback
+                return
+
+            return fallback_generator()
+
+    def _retrieve_contexts(self, question: str) -> list:
+        """Retrieve contexts from ChromaDB"""
+        try:
+            question_embedding = embed_text(question)
+            max_result = determine_optimal_results(question)
+
+            results = collection.query(
+                query_embeddings=[question_embedding.tolist()],
+                n_results=max_result
+            )
+
+            # Filter relevant contexts
+            filtered_contexts = filter_relevant_contexts(
+                question, results["documents"][0], results["metadatas"][0], min_relevance=0.05
+            )
+
+            if len(filtered_contexts) == 0:
+                logging.warning("No contexts passed relevance filter, using all retrieved contexts")
+                filtered_contexts = [{'text': doc, 'metadata': meta} for doc, meta in zip(results["documents"][0], results["metadatas"][0])]
+
+            return filtered_contexts
+
+        except Exception as e:
+            logging.error(f"❌ Failed to retrieve contexts: {str(e)}")
+            return []
+
+    def _generate_response(self, question: str, contexts: list, relevant_memories: list,
+                          rag_mode: str, chat_llm: str, show_source: bool, formal_style: bool):
+        """Generate response using appropriate RAG mode"""
+        try:
+            if rag_mode == "enhanced":
+                # Use Enhanced RAG logic
+                return self._enhanced_response_generator(
+                    question, contexts, relevant_memories, chat_llm, show_source, formal_style
+                )
+            else:
+                # Use Standard RAG logic
+                return self._standard_response_generator(
+                    question, contexts, chat_llm, show_source, formal_style
+                )
+        except Exception as e:
+            logging.error(f"❌ Failed to generate response: {str(e)}")
+            def error_generator():
+                yield "ขอโทษครับ เกิดข้อผิดพลาดในการสร้างคำตอบ"
+                return
+            return error_generator()
+
+    def _standard_response_generator(self, question: str, contexts: list, chat_llm: str,
+                                   show_source: bool, formal_style: bool):
+        """Standard RAG response generator"""
+        if not contexts:
+            # Use fallback mechanism
+            fallback = self.standard_rag.get_fallback_answer(question)
+            def fallback_gen():
+                yield fallback
+                return
+            return fallback_gen()
+
+        # Build standard prompt
+        prompt = self._build_standard_prompt(question, contexts, show_source, formal_style)
+
+        # Generate streaming response
+        return chat_with_model_streaming(chat_llm, prompt, [])
+
+    def _enhanced_response_generator(self, question: str, contexts: list, relevant_memories: list,
+                                   chat_llm: str, show_source: bool, formal_style: bool):
+        """Enhanced RAG response generator with memory"""
+        # Use existing enhanced RAG logic but with improvements
+        return query_rag(question, chat_llm, show_source, formal_style)
+
+    def _build_standard_prompt(self, question: str, contexts: list, show_source: bool, formal_style: bool) -> str:
+        """Build standard RAG prompt"""
+        style_instruction = "ตอบอย่างเป็นทางการ" if formal_style else "ตอบอย่างเป็นกันเอง"
+
+        context_text = "\n\n".join([f"ข้อมูล {i+1}: {ctx['text']}" for i, ctx in enumerate(contexts[:5])])
+
+        return f"""คุณเป็นผู้ช่วยตอบคำถามที่มีความรู้ด้านเอกสารที่อัปโหลดไว้
+
+**แนวทางการตอบ:**
+- {style_instruction}
+- ให้คำตอบที่สอดคล้องกับข้อมูลในเอกสารเป็นหลัก
+- ถ้าไม่พบข้อมูลที่เกี่ยวข้อง ให้บอกว่าไม่พบข้อมูล
+
+**ข้อมูลที่เกี่ยวข้อง:**
+{context_text}
+
+**คำถาม:** {question}
+
+**คำตอบ:**"""
+
+def get_feedback_stats():
+    """ดึงสถิติ feedback"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        # สถิติทั่วไป
+        cursor.execute("SELECT COUNT(*) FROM feedback")
+        total = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM feedback WHERE feedback_type = 'good'")
+        good = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM feedback WHERE feedback_type = 'bad'")
+        bad = cursor.fetchone()[0]
+
+        # Feedback ล่าสุด
+        cursor.execute('''
+            SELECT question, answer, feedback_type, timestamp, user_comment
+            FROM feedback
+            ORDER BY timestamp DESC
+            LIMIT 10
+        ''')
+        recent_feedback = cursor.fetchall()
+
+        conn.close()
+
+        return {
+            "total": total,
+            "good": good,
+            "bad": bad,
+            "accuracy": (good / total * 100) if total > 0 else 0,
+            "recent": recent_feedback
+        }
+    except Exception as e:
+        logging.error(f"❌ Failed to get feedback stats: {str(e)}")
+        return {"total": 0, "good": 0, "bad": 0, "accuracy": 0, "recent": []}
+
+
+def delete_feedback(feedback_id: int):
+    """ลบ feedback ตาม ID"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM feedback WHERE id = ?", (feedback_id,))
+        affected = cursor.rowcount
+
+        conn.commit()
+        conn.close()
+
+        if affected > 0:
+            logging.info(f"✅ Deleted feedback ID: {feedback_id}")
+            return True
+        else:
+            logging.warning(f"⚠️ Feedback ID {feedback_id} not found")
+            return False
+    except Exception as e:
+        logging.error(f"❌ Failed to delete feedback: {str(e)}")
+        return False
+
+
+def export_feedback():
+    """ส่งออกข้อมูล feedback เป็น CSV"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT id, question, answer, feedback_type, user_comment, corrected_answer,
+                   timestamp, model_used, sources
+            FROM feedback
+            ORDER BY timestamp DESC
+        ''')
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        # สร้าง CSV string
+        csv_data = []
+        csv_data.append("ID,Question,Answer,Feedback Type,User Comment,Corrected Answer,Timestamp,Model,Sources")
+
+        for row in rows:
+            # Escape quotes in text fields
+            q1 = str(row[1]).replace('"', '""') if row[1] else ""
+            q2 = str(row[2]).replace('"', '""') if row[2] else ""
+            q4 = str(row[4]).replace('"', '""') if row[4] else ""
+            q5 = str(row[5]).replace('"', '""') if row[5] else ""
+            q8 = str(row[8]).replace('"', '""') if row[8] else ""
+
+            csv_row = [
+                str(row[0]),
+                f'"{q1}"',  # Question
+                f'"{q2}"',  # Answer
+                row[3],      # Feedback type
+                f'"{q4}"',  # User comment
+                f'"{q5}"',  # Corrected answer
+                row[6],      # Timestamp
+                row[7],      # Model
+                f'"{q8}"'   # Sources
+            ]
+            csv_data.append(",".join(csv_row))
+
+        return "\n".join(csv_data)
+    except Exception as e:
+        logging.error(f"❌ Failed to export feedback: {str(e)}")
+        return None
+
+
+# ==================== END FEEDBACK FUNCTIONS ====================
+
+
 def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = False, formal_style: bool = False,
                        send_to_discord: bool = False, send_to_line: bool = False, send_to_facebook: bool = False,
                        line_user_id: str = "", fb_user_id: str = ""):
@@ -2479,6 +3896,9 @@ def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = F
     อินเทอร์เฟซแชทบอทแบบ streaming
     """
     user_message = history[-1]["content"]
+
+    # ส่งคืนคำถามปัจจุบันสำหรับ feedback
+    current_q = user_message
 
     stream= query_rag(user_message, chat_llm=llm_model, show_source=show_source, formal_style=formal_style)
 
@@ -2489,37 +3909,37 @@ def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = F
     """
     for chunk in stream:
         content = chunk["message"]["content"]
-        full_answer += content 
+        full_answer += content
         history[-1]["content"] += content
         #logging.info(f"content: {content}")
-        yield history
-    
+        yield history, current_q, full_answer, json.dumps([]) if show_source else ""
 
     """
-    ส่วนของการดึงรูปภาพ ที่เกี่ยวข้องมาแสดง โดยดึงจาก คำตอบด้านบน 
+    ส่วนของการดึงรูปภาพ ที่เกี่ยวข้องมาแสดง โดยดึงจาก คำตอบด้านบน
     """
 
-    # ใช้ regex เพื่อดึงชื่อไฟล์ที่อยู่ใน [ภาพ: ...] 
+    # ใช้ regex เพื่อดึงชื่อไฟล์ที่อยู่ใน [ภาพ: ...]
     print(full_answer)
     pattern1 = r"\[(?:ภาพ:\s*)?(pic_\w+[-_]?\w*\.(?:jpe?g|png))\]"
     pattern2 = r"(pic_\w+[-_]?\w*\.(?:jpe?g|png))"
     # ค้นหาทุกรูป แบบที่ตรงกับ ส่งเข้ามา
-    
-    print("----------PPPP------------")       
+
+    print("----------PPPP------------")
     image_list = re.findall(pattern1, full_answer)
     print(image_list)
     if (len(image_list)==0):
         image_list = re.findall(pattern2, full_answer)
-    print("----------xxxx------------")  
+    print("----------xxxx------------")
     # ดึงเฉพาะรูปที่ไม่ซ้ำกัน
-    image_list_uniq = list(dict.fromkeys(image_list))  
+    image_list_uniq = list(dict.fromkeys(image_list))
     if image_list_uniq:
         history[-1]["content"] += "\n\nรูปภาพที่เกี่ยวข้อง:"
-        yield history    
-        # ดึงรูปมาแสดง 
+        yield history, current_q, full_answer, json.dumps([]) if show_source else ""
+
+        # ดึงรูปมาแสดง
         for img in image_list_uniq:
             img_path = f"{TEMP_IMG}/{img}"
-            logger.info(f"img_path: {img_path}")      
+            logger.info(f"img_path: {img_path}")
             if os.path.exists(img_path):
                     image = Image.open(img_path)
                     buffered = io.BytesIO()
@@ -2527,12 +3947,28 @@ def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = F
                     image_response = f"{img} ![{img}](data:image/png;base64,{base64.b64encode(buffered.getvalue()).decode()})"
                     #ส่งรูปไปที่ Chat
                     history.append({"role": "assistant", "content": image_response })
-                    yield history
+                    yield history, current_q, full_answer, json.dumps([]) if show_source else ""
+
+    # Learning from corrected answers
+    try:
+        similar_corrected = find_similar_corrected_answer(user_message, threshold=0.85)
+        if similar_corrected:
+            # ใช้คำตอบที่ถูกแก้ไขแทน
+            full_answer = similar_corrected['corrected_answer']
+            logging.info(f"🎓 Applied learned correction (similarity: {similar_corrected['similarity']:.2f}): {user_message[:50]}...")
+
+            # อัปเดตประวัติการใช้งาน
+            increment_corrected_answer_usage(similar_corrected['original_question'])
+
+            # เพิ่มข้อความแจ้งว่าใช้คำตอบที่ถูกเรียนรู้
+            full_answer += f"\n\n💡 *คำตอบนี้ได้รับการปรับปรุงจากการเรียนรู้จากคำตอบที่ถูกแนะนำมาก่อน (ความคล้ายกัน: {similar_corrected['similarity']:.1%})*"
+    except Exception as e:
+        logging.warning(f"⚠️ Failed to apply learning from corrected answers: {str(e)}")
 
     # Store conversation in memory for Enhanced RAG
     if RAG_MODE == "enhanced":
         try:
-            enhanced_rag.store_memory(user_message, full_answer)
+            enhanced_rag.add_to_memory(user_message, full_answer, [])
             logging.info("Stored conversation in Enhanced RAG memory")
         except Exception as e:
             logging.error(f"Failed to store in Enhanced RAG memory: {str(e)}")
@@ -2578,6 +4014,9 @@ def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = F
 
     except Exception as e:
         logging.error(f"❌ เกิดข้อผิดพลาดในการส่งคำตอบไปยังแพลตฟอร์ม: {str(e)}")
+
+    # Final yield with complete data
+    yield history, current_q, full_answer, json.dumps([]) if show_source else ""
 
 
 
@@ -2671,7 +4110,7 @@ with gr.Blocks(
                     elem_classes="drop-zone",
                     show_label=True,
                     container=True,
-                    scale=0.98
+                    scale=1
                 )
 
             # File display area
@@ -3281,6 +4720,295 @@ with gr.Blocks(
             queue=False
         )
 
+    with gr.Tab("📊 Feedback และสถิติ"):
+        gr.Markdown("## 📊 ระบบ Feedback สำหรับปรับปรุงคำตอบ")
+
+        # สถิติหลัก
+        with gr.Row():
+            with gr.Column(scale=1):
+                gr.Markdown("### 📈 สถิติการตอบกลับ")
+                stats_display = gr.HTML()
+
+                refresh_stats_btn = gr.Button("🔄 รีเฟรชสถิติ", variant="secondary")
+
+                # ปุ่มส่งออกข้อมูล
+                export_btn = gr.Button("📥 ส่งออกข้อมูล Feedback", variant="primary")
+                download_file = gr.File(visible=False)
+
+            with gr.Column(scale=2):
+                gr.Markdown("### 📝 Feedback ล่าสุด")
+                feedback_display = gr.Dataframe(
+                    headers=["คำถาม", "คำตอบ", "ประเภท", "เวลา", "ความคิดเห็น"],
+                    datatype=["str", "str", "str", "str", "str"],
+                    interactive=False,
+                    wrap=True,
+                    value=[]  # เริ่มต้นด้วยค่าว่าง
+                )
+
+                # ส่วนจัดการ feedback
+                with gr.Row():
+                    feedback_id_input = gr.Number(
+                        label="Feedback ID ที่ต้องการลบ",
+                        minimum=1,
+                        step=1,
+                        info="ใส่ ID จากตารางด้านบน"
+                    )
+                    delete_feedback_btn = gr.Button("🗑️ ลบ Feedback", variant="stop")
+
+                delete_status = gr.Textbox(label="สถานะการลบ", interactive=False)
+
+        # สถิติการเรียนรู้
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown("### 🎓 สถิติการเรียนรู้ (Learning Analytics)")
+                learning_stats_display = gr.HTML()
+
+                refresh_learning_btn = gr.Button("🔄 รีเฟรชสถิติการเรียนรู้", variant="secondary")
+
+                # แสดงคำตอบที่ถูกนำไปใช้บ่อยที่สุด
+                most_used_display = gr.Dataframe(
+                    headers=["คำถามที่ถูกแก้ไข", "จำนวนครั้งที่นำไปใช้"],
+                    datatype=["str", "int"],
+                    interactive=False,
+                    wrap=True
+                )
+
+        # ฟังก์ชันสำหรับอัปเดตสถิติ
+        def update_stats_display():
+            try:
+                stats = get_feedback_stats()
+
+                stats_html = f"""
+                <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                    <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; text-align: center; flex: 1;">
+                        <h3 style="margin: 0; color: #2e7d32;">{stats['total']}</h3>
+                        <p style="margin: 5px 0 0 0; color: #555;">ทั้งหมด</p>
+                    </div>
+                    <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; text-align: center; flex: 1;">
+                        <h3 style="margin: 0; color: #1976d2;">{stats['good']}</h3>
+                        <p style="margin: 5px 0 0 0; color: #555;">ถูกต้อง 👍</p>
+                    </div>
+                    <div style="background: #ffebee; padding: 15px; border-radius: 8px; text-align: center; flex: 1;">
+                        <h3 style="margin: 0; color: #d32f2f;">{stats['bad']}</h3>
+                        <p style="margin: 5px 0 0 0; color: #555;">ผิดพลาด 👎</p>
+                    </div>
+                    <div style="background: #fff3e0; padding: 15px; border-radius: 8px; text-align: center; flex: 1;">
+                        <h3 style="margin: 0; color: #f57c00;">{stats['accuracy']:.1f}%</h3>
+                        <p style="margin: 5px 0 0 0; color: #555;">ความแม่นยำ</p>
+                    </div>
+                </div>
+                """
+
+                return stats_html, stats['recent']
+            except Exception as e:
+                error_html = f"""
+                <div style="background: #ffebee; padding: 15px; border-radius: 8px; text-align: center;">
+                    <h3 style="margin: 0; color: #d32f2f;">❌ เกิดข้อผิดพลาด</h3>
+                    <p style="margin: 5px 0 0 0; color: #555;">ไม่สามารถโหลดข้อมูลได้: {str(e)}</p>
+                </div>
+                """
+                return error_html, []
+
+        # ฟังก์ชันสำหรับลบ feedback
+        def delete_feedback_handler(feedback_id):
+            if feedback_id is None or feedback_id <= 0:
+                return "❌ กรุณาระบุ Feedback ID ที่ถูกต้อง"
+
+            if delete_feedback(int(feedback_id)):
+                # อัปเดตสถิติและตารางใหม่
+                stats_html, recent_data = update_stats_display()
+                return "✅ ลบ Feedback เรียบร้อยแล้ว", stats_html, recent_data
+            else:
+                return "❌ ไม่สามารถลบ Feedback ได้ (ID ไม่พบหรือเกิดข้อผิดพลาด)", None, None
+
+        # ฟังก์ชันสำหรับส่งออกข้อมูล
+        def export_feedback_handler():
+            csv_data = export_feedback()
+            if csv_data:
+                import io
+                from datetime import datetime
+
+                filename = f"feedback_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+                # สร้างไฟล์ชั่วคราว
+                filepath = f"./data/{filename}"
+                with open(filepath, 'w', encoding='utf-8-sig') as f:  # utf-8-sig สำหรับ Excel
+                    f.write(csv_data)
+
+                return filepath
+            return None
+
+        # ฟังก์ชันสำหรับอัปเดตสถิติการเรียนรู้
+        def update_learning_display():
+            try:
+                learning_stats = get_learning_stats()
+
+                learning_html = f"""
+                <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                    <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; text-align: center; flex: 1;">
+                        <h3 style="margin: 0; color: #2e7d32;">{learning_stats['total_corrected']}</h3>
+                        <p style="margin: 5px 0 0 0; color: #555;">คำตอบที่ถูกแก้ไข</p>
+                    </div>
+                    <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; text-align: center; flex: 1;">
+                        <h3 style="margin: 0; color: #1976d2;">{learning_stats['used_corrected']}</h3>
+                        <p style="margin: 5px 0 0 0; color: #555;">ถูกนำไปใช้</p>
+                    </div>
+                    <div style="background: #fff3e0; padding: 15px; border-radius: 8px; text-align: center; flex: 1;">
+                        <h3 style="margin: 0; color: #f57c00;">{learning_stats['learning_rate']:.1f}%</h3>
+                        <p style="margin: 5px 0 0 0; color: #555;">อัตราการเรียนรู้</p>
+                    </div>
+                    <div style="background: #f3e5f5; padding: 15px; border-radius: 8px; text-align: center; flex: 1;">
+                        <h3 style="margin: 0; color: #7b1fa2;">{learning_stats['corrected_feedback']}</h3>
+                        <p style="margin: 5px 0 0 0; color: #555;">Feedback ที่มีการแก้ไข</p>
+                    </div>
+                </div>
+                """
+
+                # จัดรูปแบบข้อมูลสำหรับแสดงในตาราง
+                most_used_data = []
+                for item in learning_stats['most_used']:
+                    # ตัดคำถามที่ยาวเกินไป
+                    question = item[0]
+                    if len(question) > 100:
+                        question = question[:97] + "..."
+                    most_used_data.append([question, item[1]])
+
+                return learning_html, most_used_data
+            except Exception as e:
+                error_html = f"""
+                <div style="background: #ffebee; padding: 15px; border-radius: 8px; text-align: center;">
+                    <h3 style="margin: 0; color: #d32f2f;">❌ เกิดข้อผิดพลาด</h3>
+                    <p style="margin: 5px 0 0 0; color: #555;">ไม่สามารถโหลดข้อมูลการเรียนรู้ได้: {str(e)}</p>
+                </div>
+                """
+                return error_html, []
+
+        # เชื่อมต่อ events
+        refresh_stats_btn.click(
+            fn=update_stats_display,
+            inputs=[],
+            outputs=[stats_display, feedback_display]
+        )
+
+        delete_feedback_btn.click(
+            fn=delete_feedback_handler,
+            inputs=[feedback_id_input],
+            outputs=[delete_status, stats_display, feedback_display]
+        )
+
+        export_btn.click(
+            fn=export_feedback_handler,
+            inputs=[],
+            outputs=[download_file]
+        )
+
+        refresh_learning_btn.click(
+            fn=update_learning_display,
+            inputs=[],
+            outputs=[learning_stats_display, most_used_display]
+        )
+
+        # อัปเดตสถิติครั้งแรก (delayed load with error handling)
+        demo.load(
+            fn=lambda: [update_stats_display(), update_learning_display()],
+            inputs=[],
+            outputs=[stats_display, feedback_display, learning_stats_display, most_used_display],
+            show_progress=True
+        )
+
+    # ==================== TAG MANAGEMENT TAB ====================
+    with gr.Tab("🏷️ จัดการ Tag"):
+        gr.Markdown("## 🏷️ ระบบจัดการ Tag")
+        gr.Markdown("จัดการ tags เพื่อจัดกลุ่มเอกสารและ feedback ให้เข้าถึงได้รวดเร็วและตรงประเด็น")
+
+        with gr.Row():
+            with gr.Column(scale=2):
+                gr.Markdown("### 📝 สร้าง Tag ใหม่")
+                with gr.Row():
+                    tag_name_input = gr.Textbox(
+                        label="ชื่อ Tag",
+                        placeholder="ตัวอย่าง: ปัญหาที่พบบ่อย, เอกสารสำคัญ, คำถามทั่วไป",
+                        scale=3
+                    )
+                    tag_color_input = gr.ColorPicker(
+                        label="สี Tag",
+                        value="#007bff",
+                        scale=1
+                    )
+                tag_desc_input = gr.Textbox(
+                    label="รายละเอียด Tag",
+                    placeholder="รายละเอียดเพิ่มเติมเกี่ยวกับ tag นี้"
+                )
+                create_tag_btn = gr.Button("🏷️ สร้าง Tag", variant="primary")
+
+            with gr.Column(scale=3):
+                gr.Markdown("### 📋 Tags ทั้งหมด")
+                tags_list = gr.Dataframe(
+                    headers=["ID", "ชื่อ Tag", "สี", "รายละเอียด", "วันที่สร้าง"],
+                    datatype=["number", "str", "str", "str", "str"],
+                    interactive=False,
+                    wrap=True
+                )
+                refresh_tags_btn = gr.Button("🔄 รีเฟรชรายการ Tag")
+                delete_tag_btn = gr.Button("🗑️ ลบ Tag ที่เลือก", variant="stop")
+
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown("### 🏆 Tags ที่ใช้บ่อย")
+                popular_tags = gr.Dataframe(
+                    headers=["ชื่อ Tag", "จำนวนการใช้"],
+                    datatype=["str", "number"],
+                    interactive=False,
+                    wrap=True
+                )
+
+            with gr.Column():
+                gr.Markdown("### 💬 Tags ใน Feedback")
+                feedback_tags = gr.Dataframe(
+                    headers=["ชื่อ Tag", "จำนวน Feedback"],
+                    datatype=["str", "number"],
+                    interactive=False,
+                    wrap=True
+                )
+
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown("### 🔍 ค้นหาเอกสารตาม Tag")
+                with gr.Row():
+                    selected_tags_search = gr.CheckboxGroup(
+                        label="เลือก Tags (เลือกหลายอันได้)",
+                        choices=[]
+                    )
+                    search_by_tags_btn = gr.Button("🔍 ค้นหา", variant="primary")
+
+                search_results = gr.Dataframe(
+                    headers=["Document ID", "Content Preview"],
+                    datatype=["str", "str"],
+                    interactive=False,
+                    wrap=True
+                )
+
+            with gr.Column():
+                gr.Markdown("### 💬 Feedback ตาม Tag")
+                tag_feedback_selector = gr.Dropdown(
+                    label="เลือก Tag",
+                    choices=[]
+                )
+                load_feedback_by_tag_btn = gr.Button("📋 โหลด Feedback", variant="primary")
+
+                tag_feedback_display = gr.Dataframe(
+                    headers=["ID", "คำถาม", "คำตอบ", "ประเภท", "วันที่", "ความคิดเห็น"],
+                    datatype=["number", "str", "str", "str", "str", "str"],
+                    interactive=False,
+                    wrap=True
+                )
+
+        # Status display
+        tag_status = gr.HTML("")
+        tag_status_display = gr.HTML("")  # สำหรับแสดงสถานะต่างๆ
+
+    # ==================== END TAG MANAGEMENT TAB ====================
+
     with gr.Tab("แชท"):
         # Choice เลือก Model
         model_selector = gr.Dropdown(
@@ -3421,7 +5149,45 @@ with gr.Blocks(
         # Chat Bot
         chatbot = gr.Chatbot(type="messages")
         msg = gr.Textbox(label="ถามคำถามเกี่ยวกับ PDF")
-        # Clear button 
+
+        # Feedback Section
+        with gr.Row():
+            gr.Markdown("### 💡 คำตอบนี้ถูกต้องหรือไม่? ช่วยปรับปรุงให้ดีขึ้น")
+
+        with gr.Row():
+            with gr.Column(scale=3):
+                # เก็บข้อมูลการสนทนาปัจจุบันสำหรับ feedback
+                current_question = gr.State("")
+                current_answer = gr.State("")
+                current_sources = gr.State("")
+
+                # ปุ่ม feedback
+                with gr.Row():
+                    good_feedback_btn = gr.Button("👍 ถูกต้อง", variant="primary", size="sm")
+                    bad_feedback_btn = gr.Button("👎 ผิดพลาด", variant="secondary", size="sm")
+
+            with gr.Column(scale=4):
+                # ช่องสำหรับใส่ความคิดเห็นและคำตอบที่ถูกต้อง
+                with gr.Row():
+                    user_comment = gr.Textbox(
+                        label="💬 ความคิดเห็นเพิ่มเติม (ไม่บังคับ)",
+                        placeholder="อธิบายเพิ่มเติมว่าทำไมคำตอบถึงถูกหรือผิด...",
+                        lines=2
+                    )
+
+                with gr.Row():
+                    corrected_answer = gr.Textbox(
+                        label="✅ คำตอบที่ถูกต้อง (ถ้าผิด)",
+                        placeholder="ใส่คำตอบที่ถูกต้องที่นี่...",
+                        lines=3,
+                        visible=False
+                    )
+
+                with gr.Row():
+                    submit_feedback_btn = gr.Button("📝 ส่ง Feedback", variant="primary", visible=False)
+                    feedback_status = gr.Textbox(label="สถานะ", interactive=False, visible=False)
+
+        # Clear button
         clear_chat = gr.Button("ล้าง")
         # Submit function 
         msg.submit(
@@ -3434,9 +5200,164 @@ with gr.Blocks(
             inputs=[chatbot, selected_model, show_source_checkbox, formal_style_checkbox,
                    send_to_discord_checkbox, send_to_line_checkbox, send_to_facebook_checkbox,
                    line_user_id_input, fb_user_id_input],
-            outputs=chatbot
+            outputs=[chatbot, current_question, current_answer, current_sources]
         )
         clear_chat.click(lambda: [], None, chatbot, queue=False)
+
+        # ==================== FEEDBACK EVENT HANDLERS ====================
+
+        def on_good_feedback():
+            """เมื่อกดปุ่ม 👍"""
+            return (
+                gr.update(visible=True),  # submit_feedback_btn
+                gr.update(visible=True),  # feedback_status
+                gr.update(visible=False),  # corrected_answer
+                "กำลังส่ง feedback ว่าคำตอบถูกต้อง..."
+            )
+
+        def on_bad_feedback():
+            """เมื่อกดปุ่ม 👎"""
+            return (
+                gr.update(visible=True),  # submit_feedback_btn
+                gr.update(visible=True),  # feedback_status
+                gr.update(visible=True),  # corrected_answer
+                "กรุณาระบุคำตอบที่ถูกต้อง (ถ้าจำเป็น)"
+            )
+
+        def submit_feedback_handler(feedback_type, question, answer, user_comment, corrected_answer, model):
+            """ส่ง feedback ไปยังฐานข้อมูล"""
+            if not question or not answer:
+                return "❌ ไม่พบข้อมูลการสนทนา กรุณาถามคำถามใหม่"
+
+            # กำหนดประเภท feedback
+            if feedback_type == "good":
+                f_type = "good"
+                comment = user_comment
+                corrected = ""
+            else:  # bad
+                f_type = "bad"
+                comment = user_comment
+                corrected = corrected_answer if corrected_answer else "ไม่ได้ระบุ"
+
+            # บันทึกลงฐานข้อมูล
+            if save_feedback(question, answer, f_type, comment, corrected, model, ""):
+                return f"✅ ขอบคุณสำหรับ feedback! คำตอบนี้ถูกบันทึกเพื่อปรับปรุงระบบแล้ว"
+            else:
+                return "❌ เกิดข้อผิดพลาดในการบันทึก feedback กรุณาลองใหม่"
+
+        # เก็บ feedback type ปัจจุบัน
+        feedback_type_state = gr.State("")
+
+        # เชื่อมต่อ events สำหรับ feedback
+        good_feedback_btn.click(
+            fn=lambda: [gr.update(visible=True), gr.update(visible=True), gr.update(visible=False), "กำลังส่ง feedback ว่าคำตอบถูกต้อง...", "good"],
+            inputs=[],
+            outputs=[submit_feedback_btn, feedback_status, corrected_answer, feedback_status, feedback_type_state]
+        )
+
+        bad_feedback_btn.click(
+            fn=lambda: [gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), "กรุณาระบุคำตอบที่ถูกต้อง (ถ้าจำเป็น)", "bad"],
+            inputs=[],
+            outputs=[submit_feedback_btn, feedback_status, corrected_answer, feedback_status, feedback_type_state]
+        )
+
+        submit_feedback_btn.click(
+            fn=submit_feedback_handler,
+            inputs=[feedback_type_state, current_question, current_answer, user_comment, corrected_answer, selected_model],
+            outputs=[feedback_status]
+        ).then(
+            fn=lambda: [gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), "", ""],
+            outputs=[submit_feedback_btn, feedback_status, corrected_answer, user_comment, user_comment]
+        )
+
+        # ==================== TAG MANAGEMENT EVENT HANDLERS ====================
+
+        # Function to update all tag-related components
+        def update_all_tag_components():
+            """Update all tag components"""
+            try:
+                tag_data, tag_choices, status_html, _ = refresh_tags_list()
+                popular_data, feedback_data = update_tag_statistics()
+
+                # Create choices for dropdown (just the labels)
+                dropdown_choices = [choice[0] for choice in tag_choices]
+
+                return tag_data, dropdown_choices, status_html, "", popular_data, feedback_data
+            except Exception as e:
+                logging.error(f"❌ Failed to update tag components: {str(e)}")
+                return [], [], gr.HTML(f'<div style="color: red;">❌ เกิดข้อผิดพลาด: {str(e)}</div>'), "", [], []
+
+        # Initialize tag lists on load
+        demo.load(
+            fn=update_all_tag_components,
+            inputs=[],
+            outputs=[tags_list, selected_tags_search, tag_status, tag_status_display, popular_tags, feedback_tags]
+        )
+
+        # Create new tag
+        def handle_create_tag(name, color, description):
+            """Handle tag creation and update all components"""
+            result = create_new_tag(name, color, description)
+            if result[0]:  # If successful, update all components
+                return update_all_tag_components()
+            else:
+                # Return the error message from create_new_tag
+                tags = get_all_tags()
+                tag_choices = [(f"🏷️ {tag[1]}", tag[0]) for tag in tags]
+                dropdown_choices = [choice[0] for choice in tag_choices]
+                tag_data = [[tag[0], tag[1], tag[2], tag[3] or "", tag[4]] for tag in tags]
+                popular_data, feedback_data = update_tag_statistics()
+                return tag_data, dropdown_choices, result[2], "", popular_data, feedback_data
+
+        create_tag_btn.click(
+            fn=handle_create_tag,
+            inputs=[tag_name_input, tag_color_input, tag_desc_input],
+            outputs=[tags_list, selected_tags_search, tag_status, tag_status_display, popular_tags, feedback_tags]
+        )
+
+        # Refresh tags list
+        refresh_tags_btn.click(
+            fn=update_all_tag_components,
+            inputs=[],
+            outputs=[tags_list, selected_tags_search, tag_status, tag_status_display, popular_tags, feedback_tags]
+        )
+
+        # Delete selected tag
+        def delete_and_refresh(selected_row):
+            """Delete tag and refresh all components"""
+            if not selected_row or not selected_row.get("ID"):
+                return [], [], gr.HTML('<div style="color: orange;">⚠️ กรุณาเลือก Tag ที่จะลบ</div>'), "", [], []
+
+            tag_id = selected_row["ID"]
+            tag_name = selected_row.get("ชื่อ Tag", "")
+
+            success = delete_tag(tag_id)
+            if success:
+                return update_all_tag_components()
+            else:
+                return [], [], gr.HTML('<div style="color: red;">❌ ไม่สามารถลบ Tag ได้</div>'), "", [], []
+
+        delete_tag_btn.click(
+            fn=delete_and_refresh,
+            inputs=[tags_list],
+            outputs=[tags_list, selected_tags_search, tag_status, tag_status_display, popular_tags, feedback_tags]
+        )
+
+        # Search documents by tags
+        search_by_tags_btn.click(
+            fn=search_documents_by_selected_tags,
+            inputs=[selected_tags_search],
+            outputs=[search_results, tag_status_display]
+        )
+
+        # Load feedback by tag
+        load_feedback_by_tag_btn.click(
+            fn=load_feedback_by_selected_tag,
+            inputs=[tag_feedback_selector],
+            outputs=[tag_feedback_display, tag_status_display]
+        )
+
+        # ==================== END TAG MANAGEMENT EVENT HANDLERS ====================
 
 if __name__ == "__main__":
     # ล้างข้อมูล ออกจากระบบ ก่อน เริ่ม Start Web
