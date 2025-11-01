@@ -17,7 +17,19 @@ import ollama
 import shortuuid
 import logging
 import re
+import time
 import discord
+
+def log_with_time(message):
+    """Log message with timestamp and timing information"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return logging.info(f"[{timestamp}] {message}")
+
+def measure_time(start_time, label):
+    """Measure and log elapsed time from start_time"""
+    elapsed = time.time() - start_time
+    log_with_time(f"⏱️ {label}: {elapsed:.2f}s")
+    return elapsed
 import pandas as pd
 import asyncio
 import requests
@@ -103,42 +115,91 @@ def cleanup_database_locks():
     import glob
     import os
     import time
+    import shutil
 
     try:
         db_path = TEMP_VECTOR
         if not os.path.exists(db_path):
             return True
 
-        logging.info("🔧 Cleaning up database lock files...")
+        log_with_time("🔧 Cleaning up database lock files...")
 
-        # Remove lock files
+        # More aggressive lock file removal
         lock_patterns = [
             os.path.join(db_path, "**", "*.lock"),
             os.path.join(db_path, "**", "*-wal"),
             os.path.join(db_path, "**", "*-shm"),
-            os.path.join(db_path, "**", "data_level0.bin")
+            os.path.join(db_path, "**", "data_level0.bin"),
+            os.path.join(db_path, "**", "*.db"),
+            os.path.join(db_path, "**", "*.sqlite")
         ]
 
         removed_count = 0
         for pattern in lock_patterns:
             for file_path in glob.glob(pattern, recursive=True):
                 try:
+                    # Try normal removal first
                     os.remove(file_path)
-                    logging.info(f"   Removed: {os.path.basename(file_path)}")
+                    log_with_time(f"   Removed: {os.path.basename(file_path)}")
                     removed_count += 1
+                except PermissionError as pe:
+                    # File is locked, try to force unlock by changing attributes
+                    try:
+                        import stat
+                        os.chmod(file_path, stat.S_IWRITE)
+                        os.remove(file_path)
+                        log_with_time(f"   Force removed: {os.path.basename(file_path)}")
+                        removed_count += 1
+                    except:
+                        log_with_time(f"   ⚠️ Cannot remove (locked): {os.path.basename(file_path)}")
+                        # Try renaming as last resort
+                        try:
+                            backup_name = f"{file_path}.locked_{int(time.time())}"
+                            os.rename(file_path, backup_name)
+                            log_with_time(f"   Renamed locked file: {os.path.basename(file_path)}")
+                        except:
+                            log_with_time(f"   ❌ Cannot access: {os.path.basename(file_path)}")
                 except Exception as e:
-                    logging.debug(f"Could not remove {file_path}: {e}")
+                    log_with_time(f"   Could not remove {file_path}: {e}")
 
         if removed_count > 0:
-            logging.info(f"✅ Removed {removed_count} lock files")
-            time.sleep(1)  # Wait for file system to release
+            log_with_time(f"✅ Removed {removed_count} lock files")
+            time.sleep(2)  # Wait longer for file system to release
         else:
-            logging.info("ℹ️ No lock files found")
+            log_with_time("ℹ️ No lock files found")
 
         return True
 
     except Exception as e:
-        logging.error(f"Error cleaning lock files: {e}")
+        log_with_time(f"Error cleaning lock files: {e}")
+        return False
+
+def force_release_chromadb():
+    """Force release ChromaDB by killing related connections and files"""
+    try:
+        log_with_time("🚨 Force releasing ChromaDB...")
+
+        # Close any existing connections
+        try:
+            if 'collection' in globals():
+                del collection
+            if 'chroma_client' in globals():
+                del chroma_client
+            log_with_time("Closed existing ChromaDB connections")
+        except:
+            pass
+
+        # Cleanup lock files
+        cleanup_database_locks()
+
+        # Force garbage collection
+        import gc
+        gc.collect()
+
+        log_with_time("✅ Force release completed")
+        return True
+    except Exception as e:
+        log_with_time(f"Force release failed: {e}")
         return False
 
 # Clean up locks before initializing database
@@ -1435,23 +1496,35 @@ def backup_vector_db():
     """
     try:
         if not os.path.exists(TEMP_VECTOR):
-            logging.warning("ไม่พบโฟลเดอร์ database ที่จะสำรองข้อมูล")
+            log_with_time("ไม่พบโฟลเดอร์ database ที่จะสำรองข้อมูล")
             return False
 
-        # สร้าง timestamp สำหรับ backup
+        # Force release ChromaDB before backup
+        force_release_chromadb()
+        time.sleep(1)  # Wait for files to be released
+
+        # สร้าง timestamp สำหรับ backup และตรวจสอบว่าซ้ำหรือไม่
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_folder = os.path.join(TEMP_VECTOR_BACKUP, f"backup_{timestamp}")
+        base_backup_name = f"backup_{timestamp}"
+        backup_folder = os.path.join(TEMP_VECTOR_BACKUP, base_backup_name)
+
+        # หาชื่อที่ไม่ซ้ำกัน
+        counter = 1
+        while os.path.exists(backup_folder):
+            backup_name = f"{base_backup_name}_{counter}"
+            backup_folder = os.path.join(TEMP_VECTOR_BACKUP, backup_name)
+            counter += 1
 
         # คัดลอกข้อมูลไปโฟลเดอร์ backup
         shutil.copytree(TEMP_VECTOR, backup_folder)
-        logging.info(f"สำรองข้อมูลสำเร็จ: {backup_folder}")
+        log_with_time(f"สำรองข้อมูลสำเร็จ: {backup_folder}")
 
         # ลบ backup เก่าเกินกว่า 7 วัน
         cleanup_old_backups()
 
         return True
     except Exception as e:
-        logging.error(f"ไม่สามารถสำรองข้อมูลได้: {str(e)}")
+        log_with_time(f"ไม่สามารถสำรองข้อมูลได้: {str(e)}")
         return False
 
 
@@ -1491,8 +1564,16 @@ def backup_database_enhanced(backup_name=None, include_memory=False):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_name = f"enhanced_backup_{timestamp}"
 
+        # Ensure unique backup name
         backup_path = os.path.join(TEMP_VECTOR_BACKUP, backup_name)
-        os.makedirs(backup_path, exist_ok=True)
+        counter = 1
+        original_backup_name = backup_name
+        while os.path.exists(backup_path):
+            backup_name = f"{original_backup_name}_{counter}"
+            backup_path = os.path.join(TEMP_VECTOR_BACKUP, backup_name)
+            counter += 1
+
+        os.makedirs(backup_path, exist_ok=False)  # Don't allow exist to prevent conflicts
 
         # Backup main database
         if os.path.exists(TEMP_VECTOR):
@@ -1905,6 +1986,10 @@ def restore_vector_db(backup_name=None):
             logging.error(f"ไม่พบ backup: {backup_name}")
             return False
 
+        # Force release ChromaDB before restore
+        force_release_chromadb()
+        time.sleep(1)  # Wait for files to be released
+
         # สำรองข้อมูลปัจจุบันก่อน restore
         backup_vector_db()
 
@@ -1913,7 +1998,7 @@ def restore_vector_db(backup_name=None):
             shutil.rmtree(TEMP_VECTOR)
 
         shutil.copytree(backup_path, TEMP_VECTOR)
-        logging.info(f"กู้คืนข้อมูลสำเร็จจาก: {backup_name}")
+        log_with_time(f"กู้คืนข้อมูลสำเร็จจาก: {backup_name}")
 
         # รีโหลด collection
         global collection
@@ -1956,7 +2041,7 @@ def get_database_info():
             "sqlite_exists": sqlite_exists,
             "database_size_mb": round(db_size / (1024 * 1024), 2),
             "backup_count": backup_count,
-            "collections": list(chroma_client.list_collections())
+            "collections": [{"name": coll.name, "count": coll.count()} for coll in chroma_client.list_collections()]
         }
 
         logging.info(f"📊 Database Info: {count} records, {round(db_size/(1024*1024),2)}MB, {backup_count} backups")
@@ -2859,15 +2944,55 @@ def query_rag(question: str, chat_llm: str = "gemma3:latest", show_source: bool 
     logging.info("############## End Standard Prompt #################")
     logging.info(f"Prompt length: {len(prompt)} characters")
 
-    logging.info("+++++++++++++  Send prompt To LLM  ++++++++++++++++++")
+    log_with_time("+++++++++++++ Send prompt To LLM ++++++++++++++++++")
+    overall_start = time.time()
+
+    # Debug: Check Ollama server status before API call
+    health_start = time.time()
+    try:
+        import requests
+        log_with_time("Checking Ollama health before API call...")
+        health_check = requests.get("http://localhost:11434/api/tags", timeout=5)
+        measure_time(health_start, "Ollama health check")
+        log_with_time(f"Ollama health check: Status {health_check.status_code}")
+        if health_check.status_code == 200:
+            models = health_check.json().get('models', [])
+            model_names = [m['name'] for m in models]
+            log_with_time(f"Available models: {model_names}")
+            log_with_time(f"Target model '{chat_llm}' available: {chat_llm in model_names}")
+        else:
+            log_with_time(f"Ollama server returned status: {health_check.status_code}")
+    except Exception as e:
+        log_with_time(f"Ollama health check failed: {e}")
+        # Return empty stream instead of None
+        return ({"message": {"content": f"❌ Ollama server error: {str(e)}"}} for _ in range(1))
+
+    api_call_start = time.time()
+    log_with_time(f"Starting ollama.chat() with model: {chat_llm}")
+    log_with_time(f"Prompt preview: {prompt[:100]}...")
+
     ## Generation  เพื่อการตอบ chat
-    stream = ollama.chat(
-        model=chat_llm,
-        messages=[{"role": "user", "content": prompt}],      
-        stream=True
-    )
-    
-    return stream
+    try:
+        stream = ollama.chat(
+            model=chat_llm,
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+            options={
+                "temperature": 0.3,
+                "top_p": 0.9,
+                "max_tokens": 2000,
+                "num_predict": 1500
+            }
+        )
+        measure_time(api_call_start, "ollama.chat() API call")
+        log_with_time("ollama.chat() call successful, returning stream")
+        measure_time(overall_start, "Total LLM response setup time")
+        return stream
+    except Exception as e:
+        measure_time(api_call_start, "ollama.chat() API call (failed)")
+        log_with_time(f"ollama.chat() failed: {e}")
+        # Return empty stream instead of None
+        return ({"message": {"content": f"❌ LLM call failed: {str(e)}"}} for _ in range(1))
 
 # UI Event Handlers
 def handle_file_selection(files):
