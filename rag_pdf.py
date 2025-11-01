@@ -98,6 +98,52 @@ settings = Settings(
     is_persistent=True
 )
 
+def cleanup_database_locks():
+    """Clean up ChromaDB lock files that may cause access issues"""
+    import glob
+    import os
+    import time
+
+    try:
+        db_path = TEMP_VECTOR
+        if not os.path.exists(db_path):
+            return True
+
+        logging.info("🔧 Cleaning up database lock files...")
+
+        # Remove lock files
+        lock_patterns = [
+            os.path.join(db_path, "**", "*.lock"),
+            os.path.join(db_path, "**", "*-wal"),
+            os.path.join(db_path, "**", "*-shm"),
+            os.path.join(db_path, "**", "data_level0.bin")
+        ]
+
+        removed_count = 0
+        for pattern in lock_patterns:
+            for file_path in glob.glob(pattern, recursive=True):
+                try:
+                    os.remove(file_path)
+                    logging.info(f"   Removed: {os.path.basename(file_path)}")
+                    removed_count += 1
+                except Exception as e:
+                    logging.debug(f"Could not remove {file_path}: {e}")
+
+        if removed_count > 0:
+            logging.info(f"✅ Removed {removed_count} lock files")
+            time.sleep(1)  # Wait for file system to release
+        else:
+            logging.info("ℹ️ No lock files found")
+
+        return True
+
+    except Exception as e:
+        logging.error(f"Error cleaning lock files: {e}")
+        return False
+
+# Clean up locks before initializing database
+cleanup_database_locks()
+
 chroma_client = chromadb.PersistentClient(
     path=TEMP_VECTOR,
     settings=settings

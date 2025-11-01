@@ -14,7 +14,12 @@
       "Bash(pip uninstall:*)",
       "Bash(new_envScriptsactivate)",
       "Bash(call:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd:*)",
+      "Bash(powershell:*)"
     ],
     "deny": [],
     "ask": []
