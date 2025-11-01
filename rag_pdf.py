@@ -1253,15 +1253,53 @@ def clear_vector_db_and_images():
         return f"เกิดข้อผิดพลาดในการล้างข้อมูล: {str(e)}"
 
 
+def extract_images_from_answer(answer: str):
+    """
+    ดึงพาธของรูปภาพที่เกี่ยวข้องจากคำตอบ
+
+    Args:
+        answer: ข้อความคำตอบ
+
+    Returns:
+        list: รายชื่อพาธของรูปภาพที่พบ
+    """
+    import re
+
+    # ใช้ regex เพื่อดึงชื่อไฟล์ที่อยู่ใน [ภาพ: ...]
+    pattern1 = r"\[(?:ภาพ:\s*)?(pic_\w+[-_]?\w*\.(?:jpe?g|png))\]"
+    pattern2 = r"(pic_\w+[-_]?\w*\.(?:jpe?g|png))"
+
+    # ค้นหารูปภาพในคำตอบ
+    image_list = re.findall(pattern1, answer)
+    if len(image_list) == 0:
+        image_list = re.findall(pattern2, answer)
+
+    # ดึงเฉพาะรูปที่ไม่ซ้ำกัน
+    image_list_unique = list(dict.fromkeys(image_list))
+
+    # สร้างเป็นพาธเต็มและตรวจสอบว่ามีไฟล์อยู่จริง
+    valid_image_paths = []
+    for img in image_list_unique:
+        img_path = f"{TEMP_IMG}/{img}"
+        if os.path.exists(img_path):
+            valid_image_paths.append(img_path)
+            logging.info(f"Found relevant image: {img_path}")
+
+    return valid_image_paths
+
+
 async def send_to_discord(question: str, answer: str):
     """
-    ส่งคำถามและคำตอบไปยัง Discord channel
+    ส่งคำถามและคำตอบไปยัง Discord channel พร้อมรูปภาพที่เกี่ยวข้อง (ถ้ามี)
     """
     if not DISCORD_ENABLED or DISCORD_WEBHOOK_URL == "YOUR_WEBHOOK_URL_HERE":
         logging.info("Discord integration is disabled or not configured")
         return
 
     try:
+        # ดึงรูปภาพที่เกี่ยวข้องจากคำตอบ
+        image_paths = extract_images_from_answer(answer)
+
         # ใช้ Webhook URL โดยตรง
         webhook_url = DISCORD_WEBHOOK_URL
 
@@ -1271,16 +1309,51 @@ async def send_to_discord(question: str, answer: str):
         )
         embed.add_field(name="❓ คำถาม", value=question, inline=False)
         embed.add_field(name="💬 คำตอบ", value=answer[:1024] + "..." if len(answer) > 1024 else answer, inline=False)
+
+        # เพิ่มข้อมูลว่ามีรูปภาพประกอบหรือไม่
+        if image_paths:
+            embed.add_field(name="🖼️ รูปภาพที่เกี่ยวข้อง", value=f"พบ {len(image_paths)} รูปภาพที่เกี่ยวข้อง", inline=False)
+
         embed.set_footer(text="PDF RAG Assistant")
 
-        # ใช้ requests แทน discord client ที่ต้องทำงานใน event loop
-        payload = {
+        # สร้าง payload สำหรับ Discord webhook
+        payload_data = {
             "embeds": [embed.to_dict()]
         }
 
-        response = requests.post(webhook_url, json=payload, timeout=10)
+        # ถ้ามีรูปภาพ ให้แนบไปกับข้อความ
+        if image_paths:
+            # Discord webhook รองรับการแนบไฟล์ได้สูงสุด 10 ไฟล์
+            files_to_send = image_paths[:10]  # จำกัดไว้ 10 รูป
+
+            # สร้าง multipart/form-data payload
+            files = {}
+            for i, img_path in enumerate(files_to_send):
+                try:
+                    with open(img_path, 'rb') as f:
+                        files[f'file{i}'] = (os.path.basename(img_path), f.read(), 'image/png')
+                except Exception as e:
+                    logging.error(f"Failed to read image {img_path}: {str(e)}")
+
+            if files:
+                # ส่งพร้อมไฟล์แนบ
+                response = requests.post(
+                    webhook_url,
+                    files=files,
+                    data={'payload_json': json.dumps(payload_data)},
+                    timeout=30
+                )
+            else:
+                # ถ้าไม่สามารถอ่านไฟล์ได้ ส่งเฉพาะ embed
+                response = requests.post(webhook_url, json=payload_data, timeout=10)
+        else:
+            # ส่งเฉพาะ embed ถ้าไม่มีรูป
+            response = requests.post(webhook_url, json=payload_data, timeout=10)
+
         if response.status_code == 204:
             logging.info("ส่งข้อความไปยัง Discord สำเร็จ")
+            if image_paths:
+                logging.info(f"ส่งรูปภาพ {len(image_paths)} รูปไปยัง Discord สำเร็จ")
         else:
             logging.error(f"ไม่สามารถส่งข้อความไปยัง Discord: {response.status_code} - {response.text}")
 
@@ -1967,12 +2040,19 @@ class RAGPDFBot(discord.Client):
             if len(full_answer) > 1990:  # Discord จำกัด 2000 ตัวอักษร
                 full_answer = full_answer[:1980] + "...\n\n*คำตอบถูกตัดเนื่องจากความยาวเกินขีดจำกัด*"
 
+            # ดึงรูปภาพที่เกี่ยวข้องจากคำตอบ
+            image_paths = extract_images_from_answer(full_answer)
+
             # สร้าง embed สำหรับคำตอบ
             embed = discord.Embed(
                 title="",
                 description=full_answer,
                 color=discord.Color.blue()
             )
+
+            # เพิ่มข้อมูลว่ามีรูปภาพประกอบหรือไม่
+            if image_paths:
+                embed.add_field(name="🖼️ รูปภาพที่เกี่ยวข้อง", value=f"พบ {len(image_paths)} รูปภาพที่เกี่ยวข้อง", inline=False)
 
             # embed.add_field(name="❓ คำถาม", value=question, inline=False)
             # embed.set_footer(text="PDF RAG Assistant • ข้อมูลจาก PDF ที่อัปโหลด")
@@ -1981,8 +2061,8 @@ class RAGPDFBot(discord.Client):
             # ลบข้อความกำลังประมวลผล
             await processing_msg.delete()
 
-            # ส่งคำตอบตามโหมดที่กำหนด
-            await respond_to_discord_message(message, embed, DISCORD_REPLY_MODE)
+            # ส่งคำตอบตามโหมดที่กำหนด พร้อมรูปภาพ
+            await respond_to_discord_message_with_images(message, embed, image_paths, DISCORD_REPLY_MODE)
 
             logging.info(f"Discord Bot: ตอบคำถามเรียบร้อย (โหมด: {DISCORD_REPLY_MODE})")
 
@@ -2041,6 +2121,129 @@ async def respond_to_discord_message(message, embed, reply_type="channel"):
             logging.info("ส่งคำตอบใน channel แทน เนื่องจากไม่สามารถส่ง DM ได้")
         except Exception as e:
             logging.error(f"ส่งข้อความ fallback ไม่ได้: {str(e)}")
+
+
+async def respond_to_discord_message_with_images(message, embed, image_paths, reply_type="channel"):
+    """ตอบกลับข้อความใน Discord ตามโหมดที่กำหนด พร้อมส่งรูปภาพ"""
+    success_dm = False
+    success_channel = False
+
+    # ส่งใน channel (เฉพาะโหมด channel หรือ both)
+    if reply_type in ["channel", "both"]:
+        try:
+            if image_paths:
+                # ส่ง embed พร้อมรูปภาพใน channel
+                await send_message_with_images(message.channel, embed, image_paths, reply_to=message)
+            else:
+                # ส่งเฉพาะ embed ถ้าไม่มีรูป
+                await message.reply(embed=embed)
+            success_channel = True
+        except Exception as e:
+            logging.error(f"ไม่สามารถตอบใน channel: {str(e)}")
+
+    # ส่ง DM (เฉพาะโหมด dm หรือ both)
+    if reply_type in ["dm", "both"]:
+        success_dm = await send_discord_dm_with_images(message.author, embed, image_paths)
+
+    # ถ้าส่ง DM ไม่ได้แต่เลือกโหมด dm ให้ส่งใน channel แทน
+    if reply_type == "dm" and not success_dm:
+        try:
+            fallback_embed = discord.Embed(
+                title="📬 คำตอบของคุณ",
+                description=embed.description,
+                color=embed.color
+            )
+            if image_paths:
+                await send_message_with_images(message.channel, fallback_embed, image_paths, reply_to=message)
+            else:
+                await message.reply(embed=fallback_embed)
+            logging.info("ส่งคำตอบใน channel แทน เนื่องจากไม่สามารถส่ง DM ได้")
+        except Exception as e:
+            logging.error(f"ส่งข้อความ fallback ไม่ได้: {str(e)}")
+
+
+async def send_message_with_images(channel, embed, image_paths, reply_to=None):
+    """ส่งข้อความพร้อมรูปภาพใน Discord channel"""
+    try:
+        # Discord จำกัดไฟล์แนบได้ 10 ไฟล์ต่อข้อความ
+        files_to_send = image_paths[:10]
+
+        # สร้าง discord.File objects
+        files = []
+        for img_path in files_to_send:
+            try:
+                # Discord รองรับไฟล์ที่มีขนาดไม่เกิน 8MB
+                file_size = os.path.getsize(img_path)
+                if file_size > 8 * 1024 * 1024:  # 8MB
+                    logging.warning(f"รูปภาพ {img_path} มีขนาดใหญ่เกิน 8MB จะข้ามไป")
+                    continue
+
+                file = discord.File(img_path, filename=os.path.basename(img_path))
+                files.append(file)
+            except Exception as e:
+                logging.error(f"ไม่สามารถอ่านไฟล์ {img_path}: {str(e)}")
+
+        # ส่งข้อความพร้อมไฟล์
+        if files:
+            if reply_to:
+                await reply_to.reply(embed=embed, files=files)
+            else:
+                await channel.send(embed=embed, files=files)
+            logging.info(f"ส่งข้อความพร้อมรูปภาพ {len(files)} รูปไปยัง Discord สำเร็จ")
+        else:
+            # ถ้าไม่มีไฟล์ที่ส่งได้ ส่งเฉพาะ embed
+            if reply_to:
+                await reply_to.reply(embed=embed)
+            else:
+                await channel.send(embed=embed)
+
+    except Exception as e:
+        logging.error(f"เกิดข้อผิดพลาดในการส่งข้อความพร้อมรูปภาพ: {str(e)}")
+        # ส่งเฉพาะ embed ถ้าส่งรูปไม่ได้
+        try:
+            if reply_to:
+                await reply_to.reply(embed=embed)
+            else:
+                await channel.send(embed=embed)
+        except Exception as e2:
+            logging.error(f"ส่งข้อความ fallback ก็ไม่ได้: {str(e2)}")
+
+
+async def send_discord_dm_with_images(user, embed, image_paths):
+    """ส่ง Direct Message พร้อมรูปภาพให้ผู้ใช้ Discord"""
+    try:
+        # Discord จำกัดไฟล์แนบได้ 10 ไฟล์ต่อข้อความ
+        files_to_send = image_paths[:10]
+
+        # สร้าง discord.File objects
+        files = []
+        for img_path in files_to_send:
+            try:
+                file_size = os.path.getsize(img_path)
+                if file_size > 8 * 1024 * 1024:  # 8MB
+                    logging.warning(f"รูปภาพ {img_path} มีขนาดใหญ่เกิน 8MB จะข้ามไป")
+                    continue
+
+                file = discord.File(img_path, filename=os.path.basename(img_path))
+                files.append(file)
+            except Exception as e:
+                logging.error(f"ไม่สามารถอ่านไฟล์ {img_path}: {str(e)}")
+
+        # ส่ง DM พร้อมไฟล์
+        if files:
+            await user.send(embed=embed, files=files)
+        else:
+            await user.send(embed=embed)
+
+        logging.info(f"ส่ง DM พร้อมรูปภาพให้ผู้ใช้ {user.name} สำเร็จ")
+        return True
+
+    except discord.Forbidden:
+        logging.warning(f"ไม่สามารถส่ง DM ให้ผู้ใช้ {user.name} ได้ (อาจปิดการรับ DM)")
+        return False
+    except Exception as e:
+        logging.error(f"เกิดข้อผิดพลาดในการส่ง DM: {str(e)}")
+        return False
 
 
 # Global variables for Discord Bot
@@ -2730,16 +2933,19 @@ def save_feedback(question: str, answer: str, feedback_type: str, user_comment: 
         return False
 
 
-def find_similar_corrected_answer(question: str, threshold: float = 0.8) -> dict:
-    """ค้นหาคำตอบที่ถูกแก้ไขสำหรับคำถามที่คล้ายกัน"""
+def find_similar_corrected_answer(question: str, threshold: float = 0.8, include_weighted: bool = True) -> dict:
+    """ค้นหาคำตอบที่ถูกแก้ไขสำหรับคำถามที่คล้ายกัน (Enhanced with weighted scoring)"""
     try:
         conn = sqlite3.connect(FEEDBACK_DB_PATH)
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT original_question, original_answer, corrected_answer, question_embedding, applied_count
-            FROM corrected_answers
-            ORDER BY created_at DESC
+            SELECT ca.original_question, ca.original_answer, ca.corrected_answer,
+                   ca.question_embedding, ca.applied_count, ca.feedback_id,
+                   f.feedback_type, f.user_comment, f.timestamp
+            FROM corrected_answers ca
+            JOIN feedback f ON ca.feedback_id = f.id
+            ORDER BY ca.created_at DESC
         ''')
 
         rows = cursor.fetchall()
@@ -2752,7 +2958,7 @@ def find_similar_corrected_answer(question: str, threshold: float = 0.8) -> dict
         question_embedding = sentence_model.encode(question, convert_to_tensor=True).cpu().numpy()
 
         best_match = None
-        best_similarity = 0
+        best_score = 0
 
         for row in rows:
             try:
@@ -2764,15 +2970,26 @@ def find_similar_corrected_answer(question: str, threshold: float = 0.8) -> dict
                     np.linalg.norm(question_embedding) * np.linalg.norm(stored_embedding)
                 )
 
-                if similarity > threshold and similarity > best_similarity:
+                # คำนวณ weighted score (พิจารณาความเก่าและการใช้งาน)
+                recency_factor = 1.0  # สามารถเพิ่ม logic สำหรับ recency ได้
+                usage_factor = min(row[4] * 0.1, 1.0)  # จำกัด usage factor ที่ 1.0
+                feedback_quality = 1.2 if row[6] == 'good' else 1.0  # feedback type weight
+
+                weighted_score = similarity * recency_factor * usage_factor * feedback_quality
+
+                if similarity > threshold and weighted_score > best_score:
                     best_match = {
                         'original_question': row[0],
                         'original_answer': row[1],
                         'corrected_answer': row[2],
                         'similarity': similarity,
-                        'applied_count': row[4]
+                        'weighted_score': weighted_score,
+                        'applied_count': row[4],
+                        'feedback_type': row[6],
+                        'user_comment': row[7],
+                        'feedback_id': row[5]
                     }
-                    best_similarity = similarity
+                    best_score = weighted_score
 
             except Exception as e:
                 logging.warning(f"⚠️ Error processing embedding: {str(e)}")
@@ -2783,6 +3000,94 @@ def find_similar_corrected_answer(question: str, threshold: float = 0.8) -> dict
     except Exception as e:
         logging.error(f"❌ Failed to find similar corrected answer: {str(e)}")
         return None
+
+
+def calculate_feedback_priority(question: str, corrected_answer: str, confidence: float) -> float:
+    """คำนวณ priority score สำหรับ feedback (0.0 - 1.0)"""
+    try:
+        priority = confidence * 0.4  # 40% weight from confidence
+
+        # ตรวจสอบความซับซ้อนของคำถาม (คำถามซับซ้อนได้คะแนนสูงกว่า)
+        question_complexity = len(question.split()) * 0.01
+        priority += min(question_complexity, 0.2)  # 20% weight from complexity
+
+        # ตรวจสอบความยาวของคำตอบที่ถูกแก้ไข (คำตอบยาวๆ มักมีคุณค่าสูง)
+        answer_value = min(len(corrected_answer.split()) * 0.005, 0.2)  # 20% weight from answer quality
+        priority += answer_value
+
+        # ตรวจสอบว่ามีคำถามที่คล้ายกันเคยมีปัญหาหรือไม่
+        similar_issues = check_similar_issue_frequency(question)
+        issue_frequency_bonus = min(similar_issues * 0.05, 0.2)  # 20% weight from frequency
+        priority += issue_frequency_bonus
+
+        return min(priority, 1.0)
+
+    except Exception as e:
+        logging.error(f"❌ Error calculating feedback priority: {str(e)}")
+        return 0.5  # Default priority
+
+def check_similar_issue_frequency(question: str) -> int:
+    """ตรวจสอบว่ามีคำถามที่คล้ายกันเคยมีปัญหาบ่อยแค่ไหน"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        # ค้นหาคำถามที่คล้ายกันที่เคยมีปัญหา
+        question_start = question[:20] if len(question) > 20 else question
+        question_end = question[-20:] if len(question) > 20 else ""
+        cursor.execute('''
+            SELECT COUNT(*) FROM feedback
+            WHERE feedback_type = 'bad'
+            AND (question LIKE ? OR question LIKE ?)
+        ''', (f"%{question_start}%", f"%{question_end}%"))
+
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+
+    except Exception as e:
+        logging.error(f"❌ Error checking similar issue frequency: {str(e)}")
+        return 0
+
+def apply_feedback_to_rag(question: str, corrected_answer: str, confidence: float = 0.9) -> bool:
+    """นำ feedback ที่ถูกต้องไปปรับปรุง RAG ทันที (Real-time Learning Integration)"""
+    try:
+        # 1. สร้าง embedding สำหรับ corrected answer
+        question_embedding = sentence_model.encode(question, convert_to_tensor=True).cpu().numpy()
+        answer_embedding = sentence_model.encode(corrected_answer, convert_to_tensor=True).cpu().numpy()
+
+        # 2. เพิ่ม corrected answer เข้า vector database พร้อม high weight
+        global chroma_client
+        collection = chroma_client.get_or_create_collection(name="pdf_data")
+
+        # สร้าง unique ID สำหรับ corrected answer
+        corrected_id = f"corrected_{abs(hash(question + corrected_answer))}_{int(time.time())}"
+
+        # คำนวณ priority score สำหรับ corrected answer
+        priority_score = calculate_feedback_priority(question, corrected_answer, confidence)
+
+        # เพิ่มเข้า ChromaDB พร้อม metadata และ priority
+        collection.add(
+            embeddings=[question_embedding.tolist()],
+            documents=[f"Q: {question}\nA: {corrected_answer}"],
+            metadatas=[{
+                "source": "feedback_corrected",
+                "confidence": confidence,
+                "priority_score": priority_score,
+                "question": question,
+                "answer": corrected_answer,
+                "type": "corrected_answer",
+                "created_at": datetime.now().isoformat()
+            }],
+            ids=[corrected_id]
+        )
+
+        logging.info(f"✅ Applied feedback to RAG system: {question[:50]}... -> {corrected_answer[:50]}...")
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Failed to apply feedback to RAG: {str(e)}")
+        return False
 
 
 def increment_corrected_answer_usage(original_question: str) -> bool:
@@ -2887,6 +3192,130 @@ def create_tag(name: str, color: str = '#007bff', description: str = '') -> bool
     except Exception as e:
         logging.error(f"❌ Failed to create tag: {str(e)}")
         return False
+
+def analyze_feedback_patterns() -> dict:
+    """วิเคราะห์รูปแบบ feedback ด้วย AI เพื่อหา insights"""
+    try:
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        # ดึง feedback ล่าสุด 100 รายการ
+        cursor.execute('''
+            SELECT question, answer, feedback_type, user_comment, corrected_answer, timestamp
+            FROM feedback
+            ORDER BY timestamp DESC
+            LIMIT 100
+        ''')
+
+        feedback_data = cursor.fetchall()
+        conn.close()
+
+        if not feedback_data:
+            return {"patterns": [], "recommendations": [], "quality_score": 0}
+
+        # วิเคราะห์หมวดหมู่ปัญหา
+        categories = {}
+        quality_issues = []
+        improvement_suggestions = []
+
+        for fb in feedback_data:
+            question, answer, feedback_type, comment, corrected, timestamp = fb
+
+            # ตรวจจับรูปแบบจาก comments
+            if comment:
+                comment_lower = comment.lower()
+                if any(word in comment_lower for word in ['ไม่เข้าใจ', 'สับสน', 'ยาก', 'ซับซ้อน']):
+                    categories.setdefault('ความเข้าใจ', 0)
+                    categories['ความเข้าใจ'] += 1
+                elif any(word in comment_lower for word in ['ไม่ครบ', 'ขาด', 'เพิ่ม', 'ไม่พอ']):
+                    categories.setdefault('ความครบถ้วน', 0)
+                    categories['ความครบถ้วน'] += 1
+                elif any(word in comment_lower for word in ['แหล่ง', 'อ้างอิง', 'source', 'reference']):
+                    categories.setdefault('แหล่งข้อมูล', 0)
+                    categories['แหล่งข้อมูล'] += 1
+
+            # ตรวจจับคุณภาพต่ำ
+            if feedback_type == 'bad' and corrected:
+                quality_issues.append({
+                    'question': question[:100],
+                    'issue_type': 'incorrect_answer',
+                    'has_correction': True
+                })
+
+        # สร้างคำแนะนำ
+        if categories.get('ความเข้าใจ', 0) > 5:
+            improvement_suggestions.append("🔍 ปรับปรุมคำอธิบายให้เข้าใจง่ายขึ้น")
+        if categories.get('ความครบถ้วน', 0) > 5:
+            improvement_suggestions.append("📝 เพิ่มรายละเอียดในคำตอบให้ครบถ้วนขึ้น")
+        if categories.get('แหล่งข้อมูล', 0) > 3:
+            improvement_suggestions.append("📎 ตรวจสอบความถูกต้องของแหล่งอ้างอิง")
+
+        # คำนวณคะแนนคุณภาพ
+        total_feedback = len(feedback_data)
+        good_feedback = sum(1 for fb in feedback_data if fb[2] == 'good')
+        quality_score = (good_feedback / total_feedback * 100) if total_feedback > 0 else 0
+
+        return {
+            "patterns": categories,
+            "quality_issues": quality_issues[:10],  # จำกัด 10 รายการ
+            "recommendations": improvement_suggestions,
+            "quality_score": quality_score,
+            "total_analyzed": total_feedback
+        }
+
+    except Exception as e:
+        logging.error(f"❌ Failed to analyze feedback patterns: {str(e)}")
+        return {"patterns": [], "recommendations": [], "quality_score": 0}
+
+def get_comprehensive_analytics() -> dict:
+    """ดึงข้อมูล analytics แบบครบถ้วน"""
+    try:
+        # ดึงสถิติพื้นฐาน
+        basic_stats = get_feedback_stats()
+        learning_stats = get_learning_stats()
+        pattern_analysis = analyze_feedback_patterns()
+
+        # ดึงสถิติตามช่วงเวลา
+        conn = sqlite3.connect(FEEDBACK_DB_PATH)
+        cursor = conn.cursor()
+
+        # Feedback ในช่วง 7 วันล่าสุด
+        cursor.execute('''
+            SELECT DATE(timestamp) as date, COUNT(*) as count,
+                   SUM(CASE WHEN feedback_type = 'good' THEN 1 ELSE 0 END) as good_count
+            FROM feedback
+            WHERE timestamp >= DATE('now', '-7 days')
+            GROUP BY DATE(timestamp)
+            ORDER BY date DESC
+        ''')
+        weekly_trend = cursor.fetchall()
+
+        # Top problematic questions
+        cursor.execute('''
+            SELECT question, COUNT(*) as issue_count
+            FROM feedback
+            WHERE feedback_type = 'bad'
+            GROUP BY question
+            HAVING issue_count > 1
+            ORDER BY issue_count DESC
+            LIMIT 10
+        ''')
+        problematic_questions = cursor.fetchall()
+
+        conn.close()
+
+        return {
+            "basic_stats": basic_stats,
+            "learning_stats": learning_stats,
+            "pattern_analysis": pattern_analysis,
+            "weekly_trend": weekly_trend,
+            "problematic_questions": problematic_questions,
+            "generated_at": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logging.error(f"❌ Failed to get comprehensive analytics: {str(e)}")
+        return {}
 
 def get_all_tags() -> list:
     """ดึง tags ทั้งหมด"""
@@ -3603,6 +4032,7 @@ class RAGManager:
         self.enhanced_rag = ImprovedEnhancedRAG()
         self.context_cache = ContextCache()
         self.performance_monitor = PerformanceMonitor()
+        self.tag_retrieval = TagBasedRetrieval()
         self.current_session_id = self._generate_session_id()
 
     def _generate_session_id(self) -> str:
@@ -3688,8 +4118,12 @@ class RAGManager:
             return fallback_generator()
 
     def _retrieve_contexts(self, question: str) -> list:
-        """Retrieve contexts from ChromaDB"""
+        """Retrieve contexts from ChromaDB with tag-based enhancement"""
         try:
+            # Step 1: Extract tags from question
+            question_tags, tag_analysis = self.tag_retrieval.tag_question_and_enhance_search(question)
+
+            # Step 2: Get base contexts from ChromaDB
             question_embedding = embed_text(question)
             max_result = determine_optimal_results(question)
 
@@ -3698,16 +4132,36 @@ class RAGManager:
                 n_results=max_result
             )
 
-            # Filter relevant contexts
+            # Step 3: Filter relevant contexts
+            base_contexts = []
+            for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
+                base_contexts.append({'text': doc, 'metadata': meta})
+
             filtered_contexts = filter_relevant_contexts(
                 question, results["documents"][0], results["metadatas"][0], min_relevance=0.05
             )
 
             if len(filtered_contexts) == 0:
                 logging.warning("No contexts passed relevance filter, using all retrieved contexts")
-                filtered_contexts = [{'text': doc, 'metadata': meta} for doc, meta in zip(results["documents"][0], results["metadatas"][0])]
+                filtered_contexts = base_contexts
 
-            return filtered_contexts
+            # Step 4: Apply tag-based weighting if tags found
+            if question_tags:
+                final_contexts = self.tag_retrieval.get_tag_weighted_contexts(
+                    question, filtered_contexts, question_tags
+                )
+
+                # Add tag info to context metadata
+                for ctx in final_contexts:
+                    if 'tag_relevance_score' in ctx:
+                        ctx['metadata']['tag_relevance_score'] = ctx['tag_relevance_score']
+                        ctx['metadata']['matching_tags'] = ctx.get('matching_tags', [])
+
+                logging.info(f"🎯 Applied tag-based ranking: {len(final_contexts)} contexts with tags {question_tags}")
+                return final_contexts
+            else:
+                logging.info("📝 No tags found, using standard retrieval")
+                return filtered_contexts
 
         except Exception as e:
             logging.error(f"❌ Failed to retrieve contexts: {str(e)}")
@@ -3776,6 +4230,237 @@ class RAGManager:
 **คำถาม:** {question}
 
 **คำตอบ:**"""
+
+# Advanced Tag System with LLM Integration
+import re
+from typing import List, Dict, Tuple
+
+class LLMTagger:
+    """LLM-powered tag suggestion and analysis"""
+
+    def __init__(self):
+        # Predefined tag patterns for automatic detection
+        self.tag_patterns = {
+            'ชำระ': [r'ชำระ', r'จ่ายเงิน', r'การจ่าย', r'เงิน', r'บิล', r'ค่าใช้จ่าย', r'ค่าบริการ'],
+            'ปัญหา': [r'ปัญหา', r'ผิดพลาด', r'error', r'ไม่ได้', r'ล้มเหลว', r'บัก', r'ขัดข้อง'],
+            'สอบถาม': [r'สอบถาม', r'ถาม', r'อยากรู้', r'ต้องการทราบ', r'ข้อมูล', r'รายละเอียด'],
+            'เทคนิค': [r'วิธี', r'ขั้นตอน', r'การตั้งค่า', r'configure', r'setup', r'การใช้งาน'],
+            'สำคัญ': [r'สำคัญ', r'เร่งด่วน', r'ฉุกเฉิน', r'ด่วน', r'จำเป็น', r'สำคัญมาก'],
+            'เอกสาร': [r'เอกสาร', r'ไฟล์', r'PDF', r'doc', r'ข้อมูล', r'เนื้อหา'],
+            'ระบบ': [r'ระบบ', r'system', r'โปรแกรม', r'application', r'แอป', r'ซอฟต์แวร์'],
+            'บัญชี': [r'บัญชี', r'account', r'user', r'ผู้ใช้', r'login', r'รหัสผ่าน']
+        }
+
+    def extract_tags_from_text(self, text: str) -> List[str]:
+        """Extract tags from text using pattern matching"""
+        found_tags = []
+        text_lower = text.lower()
+
+        for tag_name, patterns in self.tag_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, text_lower, re.IGNORECASE):
+                    found_tags.append(tag_name)
+                    break
+
+        return list(set(found_tags))  # Remove duplicates
+
+    def suggest_tags_with_llm(self, text: str, context: str = "") -> List[str]:
+        """Use LLM to suggest relevant tags"""
+        try:
+            # Create a simple prompt for tag suggestion
+            prompt = f"""คุณเป็นผู้เชี่ยวชาญด้านการจัดหมวดหมู่เนื้อหา
+
+จากข้อความต่อไปนี้:
+"{text}"
+
+กรุณาแนะนำ tags ที่เหมาะสม (ไม่เกิน 5 tags):
+- ใช้ภาษาไทย
+- ใช้คำสั้นๆ ที่เข้าใจง่าย
+- พิจารณาความหมายโดยรวม
+
+เลือกจาก tags เหล่านี้: {', '.join(self.tag_patterns.keys())}
+
+ถ้าไม่มี tags ที่เหมาะสม ตอบว่า "ไม่มี"
+
+Tags ที่แนะนำ:"""
+
+            # Use existing model for tag suggestion
+            response = list(chat_with_model_streaming("gemma3:latest", prompt, []))
+
+            if response:
+                suggested_text = "".join(response).strip()
+
+                # Extract tags from response
+                suggested_tags = []
+                for tag_name in self.tag_patterns.keys():
+                    if tag_name in suggested_text:
+                        suggested_tags.append(tag_name)
+
+                return suggested_tags
+
+            return []
+        except Exception as e:
+            logging.error(f"❌ Failed to suggest tags with LLM: {str(e)}")
+            return []
+
+class TagBasedRetrieval:
+    """Enhanced retrieval system using tags"""
+
+    def __init__(self):
+        self.llm_tagger = LLMTagger()
+
+    def tag_question_and_enhance_search(self, question: str) -> Tuple[List[str], Dict]:
+        """Tag question and enhance search with tag-based filtering"""
+        try:
+            # Extract tags using both methods
+            pattern_tags = self.llm_tagger.extract_tags_from_text(question)
+            llm_tags = self.llm_tagger.suggest_tags_with_llm(question)
+
+            # Combine and prioritize
+            all_tags = list(set(pattern_tags + llm_tags))
+
+            tag_analysis = {
+                'pattern_tags': pattern_tags,
+                'llm_tags': llm_tags,
+                'all_tags': all_tags,
+                'tag_count': len(all_tags)
+            }
+
+            logging.info(f"🏷️ Question tags: {all_tags}")
+            return all_tags, tag_analysis
+
+        except Exception as e:
+            logging.error(f"❌ Failed to tag question: {str(e)}")
+            return [], {}
+
+    def get_tag_weighted_contexts(self, question: str, base_contexts: List[Dict], question_tags: List[str]) -> List[Dict]:
+        """Weight contexts based on tag relevance"""
+        try:
+            if not question_tags or not base_contexts:
+                return base_contexts
+
+            weighted_contexts = []
+
+            for ctx in base_contexts:
+                context_text = ctx.get('text', '')
+                context_metadata = ctx.get('metadata', {})
+
+                # Calculate tag relevance score
+                tag_score = self._calculate_tag_relevance(context_text, question_tags)
+
+                # Get document ID for additional tag lookup
+                doc_id = context_metadata.get('id', '')
+                document_tags = self._get_document_tags(doc_id)
+
+                # Additional score if document has matching tags
+                document_tag_score = len(set(question_tags) & set(document_tags))
+
+                # Combined score
+                total_score = tag_score + (document_tag_score * 0.5)
+
+                # Create weighted context
+                weighted_ctx = ctx.copy()
+                weighted_ctx['tag_relevance_score'] = total_score
+                weighted_ctx['matching_tags'] = list(set(question_tags) & set(document_tags))
+                weighted_ctx['document_tags'] = document_tags
+
+                weighted_contexts.append(weighted_ctx)
+
+            # Sort by tag relevance
+            weighted_contexts.sort(key=lambda x: x.get('tag_relevance_score', 0), reverse=True)
+
+            logging.info(f"🎯 Tag-weighted contexts: {len(weighted_contexts)} with relevance scores")
+            return weighted_contexts
+
+        except Exception as e:
+            logging.error(f"❌ Failed to weight contexts by tags: {str(e)}")
+            return base_contexts
+
+    def _calculate_tag_relevance(self, text: str, tags: List[str]) -> float:
+        """Calculate how relevant text is to given tags"""
+        score = 0.0
+        text_lower = text.lower()
+
+        for tag in tags:
+            if tag in self.llm_tagger.tag_patterns:
+                patterns = self.llm_tagger.tag_patterns[tag]
+                tag_matches = sum(1 for pattern in patterns
+                               if re.search(pattern, text_lower, re.IGNORECASE))
+                score += tag_matches
+
+        return score
+
+    def _get_document_tags(self, document_id: str) -> List[str]:
+        """Get tags associated with a document"""
+        try:
+            if not document_id:
+                return []
+
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT t.name FROM document_tags dt
+                JOIN tags t ON dt.tag_id = t.id
+                WHERE dt.document_id = ?
+            ''', (document_id,))
+
+            tags = [row[0] for row in cursor.fetchall()]
+            conn.close()
+
+            return tags
+        except Exception as e:
+            logging.error(f"❌ Failed to get document tags: {str(e)}")
+            return []
+
+    def auto_tag_document(self, document_id: str, content: str) -> List[str]:
+        """Automatically tag a document based on its content"""
+        try:
+            suggested_tags = self.llm_tagger.suggest_tags_with_llm(content)
+            pattern_tags = self.llm_tagger.extract_tags_from_text(content)
+
+            all_tags = list(set(suggested_tags + pattern_tags))
+
+            # Save tags to database
+            for tag_name in all_tags:
+                self._tag_document(document_id, tag_name)
+
+            logging.info(f"🏷️ Auto-tagged document {document_id} with tags: {all_tags}")
+            return all_tags
+
+        except Exception as e:
+            logging.error(f"❌ Failed to auto-tag document: {str(e)}")
+            return []
+
+    def _tag_document(self, document_id: str, tag_name: str):
+        """Tag a document (create tag if needed)"""
+        try:
+            conn = sqlite3.connect(FEEDBACK_DB_PATH)
+            cursor = conn.cursor()
+
+            # Get or create tag
+            cursor.execute('SELECT id FROM tags WHERE name = ?', (tag_name,))
+            result = cursor.fetchone()
+
+            if result:
+                tag_id = result[0]
+            else:
+                # Create new tag with default color
+                cursor.execute('''
+                    INSERT INTO tags (name, color, description) VALUES (?, ?, ?)
+                ''', (tag_name, '#007bff', f'Auto-generated tag for {tag_name}'))
+                tag_id = cursor.lastrowid
+
+            # Tag the document
+            cursor.execute('''
+                INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)
+            ''', (document_id, tag_id))
+
+            conn.commit()
+            conn.close()
+
+        except Exception as e:
+            logging.error(f"❌ Failed to tag document: {str(e)}")
 
 def get_feedback_stats():
     """ดึงสถิติ feedback"""
@@ -4765,6 +5450,36 @@ with gr.Blocks(
 
                 refresh_learning_btn = gr.Button("🔄 รีเฟรชสถิติการเรียนรู้", variant="secondary")
 
+        # Enhanced Analytics Dashboard
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown("### 📊 Analytics Dashboard (Advanced Insights)")
+
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        # Quality Score Overview
+                        quality_score_display = gr.HTML()
+
+                        # Pattern Analysis Results
+                        pattern_display = gr.HTML()
+
+                    with gr.Column(scale=1):
+                        # Weekly Trend Chart
+                        weekly_trend_display = gr.HTML()
+
+                        # Improvement Recommendations
+                        recommendations_display = gr.HTML()
+
+                with gr.Row():
+                    refresh_analytics_btn = gr.Button("📈 รีเฟรช Analytics ขั้นสูง", variant="primary")
+                    export_analytics_btn = gr.Button("📥 ส่งออกรายงาน", variant="secondary")
+
+                analytics_export_file = gr.File(
+                    label="📊 Analytics Report",
+                    visible=False,
+                    file_types=[".json"]
+                )
+
                 # แสดงคำตอบที่ถูกนำไปใช้บ่อยที่สุด
                 most_used_display = gr.Dataframe(
                     headers=["คำถามที่ถูกแก้ไข", "จำนวนครั้งที่นำไปใช้"],
@@ -4772,6 +5487,88 @@ with gr.Blocks(
                     interactive=False,
                     wrap=True
                 )
+
+        # Enhanced Analytics Functions
+        def update_analytics_dashboard():
+            """อัปเดต analytics dashboard ขั้นสูง"""
+            try:
+                analytics = get_comprehensive_analytics()
+                if not analytics:
+                    return "<div>ไม่มีข้อมูล analytics</div>", "<div>ไม่มีข้อมูล</div>", "<div>ไม่มีข้อมูล</div>", "<div>ไม่มีข้อมูล</div>"
+
+                # Quality Score Display
+                pattern_analysis = analytics.get('pattern_analysis', {})
+                quality_score = pattern_analysis.get('quality_score', 0)
+                quality_color = '#4caf50' if quality_score >= 80 else '#ff9800' if quality_score >= 60 else '#f44336'
+
+                quality_html = f"""
+                <div style="background: white; padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0;">
+                    <h4 style="margin: 0 0 15px 0; color: #333;">🎯 คะแนนคุณภาพระบบ</h4>
+                    <div style="text-align: center;">
+                        <div style="font-size: 3em; font-weight: bold; color: {quality_color}; margin: 10px 0;">
+                            {quality_score:.1f}%
+                        </div>
+                        <div style="color: #666; font-size: 0.9em;">
+                            จาก {pattern_analysis.get('total_analyzed', 0)} การตอบกลับล่าสุด
+                        </div>
+                    </div>
+                </div>
+                """
+
+                # Pattern Analysis Display
+                patterns = pattern_analysis.get('patterns', {})
+                pattern_html = "<div style='background: white; padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0;'><h4 style='margin: 0 0 15px 0; color: #333;'>🔍 รูปแบบปัญหา</h4>"
+                if patterns:
+                    for category, count in patterns.items():
+                        pattern_html += f"<div style='margin: 8px 0; padding: 8px; background: #f5f5f5; border-radius: 5px;'>{category}: {count} ครั้ง</div>"
+                else:
+                    pattern_html += "<div style='color: #666;'>ไม่พบรูปแบบที่น่าสนใจ</div>"
+                pattern_html += "</div>"
+
+                # Weekly Trend Display
+                weekly_trend = analytics.get('weekly_trend', [])
+                trend_html = "<div style='background: white; padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0;'><h4 style='margin: 0 0 15px 0; color: #333;'>📈 แนวโน้ม 7 วัน</h4>"
+                if weekly_trend:
+                    for date, count, good_count in weekly_trend:
+                        accuracy = (good_count / count * 100) if count > 0 else 0
+                        trend_html += f"<div style='margin: 8px 0; padding: 8px; background: #f5f5f5; border-radius: 5px; display: flex; justify-content: space-between;'><span>{date}</span><span>{count} ครั้ง ({accuracy:.0f}% ถูกต้อง)</span></div>"
+                else:
+                    trend_html += "<div style='color: #666;'>ไม่มีข้อมูลในช่วง 7 วัน</div>"
+                trend_html += "</div>"
+
+                # Recommendations Display
+                recommendations = pattern_analysis.get('recommendations', [])
+                rec_html = "<div style='background: white; padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0;'><h4 style='margin: 0 0 15px 0; color: #333;'>💡 คำแนะนำการปรับปรุง</h4>"
+                if recommendations:
+                    for rec in recommendations:
+                        rec_html += f"<div style='margin: 8px 0; padding: 10px; background: #e3f2fd; border-radius: 5px; border-left: 4px solid #2196f3;'>{rec}</div>"
+                else:
+                    rec_html += "<div style='color: #666;'>ระบบทำงานได้ดีอยู่แล้ว</div>"
+                rec_html += "</div>"
+
+                return quality_html, pattern_html, trend_html, rec_html
+
+            except Exception as e:
+                error_html = f"<div style='color: red;'>เกิดข้อผิดพลาด: {str(e)}</div>"
+                return error_html, error_html, error_html, error_html
+
+        def export_analytics_report():
+            """ส่งออกรายงาน analytics"""
+            try:
+                analytics = get_comprehensive_analytics()
+                report = {
+                    "report_type": "comprehensive_analytics",
+                    "generated_at": datetime.now().isoformat(),
+                    "data": analytics
+                }
+
+                # สร้าง JSON file สำหรับ download
+                import json
+                report_json = json.dumps(report, ensure_ascii=False, indent=2)
+
+                return gr.File(value=report_json, visible=True, label="📊 Analytics Report.json")
+            except Exception as e:
+                return gr.HTML(f"<div style='color: red;'>❌ ส่งออกรายงานไม่สำเร็จ: {str(e)}</div>")
 
         # ฟังก์ชันสำหรับอัปเดตสถิติ
         def update_stats_display():
@@ -4906,6 +5703,19 @@ with gr.Blocks(
             fn=update_learning_display,
             inputs=[],
             outputs=[learning_stats_display, most_used_display]
+        )
+
+        # Analytics Dashboard Event Handlers
+        refresh_analytics_btn.click(
+            fn=update_analytics_dashboard,
+            inputs=[],
+            outputs=[quality_score_display, pattern_display, weekly_trend_display, recommendations_display]
+        )
+
+        export_analytics_btn.click(
+            fn=export_analytics_report,
+            inputs=[],
+            outputs=[analytics_export_file]
         )
 
         # อัปเดตสถิติครั้งแรก (delayed load with error handling)
@@ -5160,11 +5970,41 @@ with gr.Blocks(
                 current_question = gr.State("")
                 current_answer = gr.State("")
                 current_sources = gr.State("")
+                feedback_type_state = gr.State("")
 
-                # ปุ่ม feedback
+                # Enhanced Feedback UI
                 with gr.Row():
-                    good_feedback_btn = gr.Button("👍 ถูกต้อง", variant="primary", size="sm")
-                    bad_feedback_btn = gr.Button("👎 ผิดพลาด", variant="secondary", size="sm")
+                    with gr.Column(scale=2):
+                        # Rating scale (1-5 stars)
+                        rating_slider = gr.Slider(
+                            minimum=1,
+                            maximum=5,
+                            value=3,
+                            step=1,
+                            label="⭐ ให้คะแนนความพึงพอใจ (1-5)",
+                            info="1=แย่มาก, 5=ดีเยี่ยม"
+                        )
+
+                        # Quick feedback buttons
+                        with gr.Row():
+                            good_feedback_btn = gr.Button("👍 ถูกต้อง", variant="primary", size="sm")
+                            bad_feedback_btn = gr.Button("👎 ผิดพลาด", variant="secondary", size="sm")
+
+                    with gr.Column(scale=3):
+                        # Feedback categories
+                        feedback_category = gr.Radio(
+                            choices=[
+                                ("✅ คำตอบถูกต้อง", "correct"),
+                                ("❌ คำตอบผิดพลาด", "incorrect"),
+                                ("🤔 ไม่เข้าใจคำถาม", "misunderstood"),
+                                ("📄 ข้อมูลไม่ครบ", "incomplete"),
+                                ("🔗 แหล่งข้อมูลผิด", "wrong_source"),
+                                ("🔄 ต้องการ context เพิ่ม", "need_context")
+                            ],
+                            value="correct",
+                            label="📋 ประเภท Feedback",
+                            info="เลือกประเภทที่ตรงที่สุด"
+                        )
 
             with gr.Column(scale=4):
                 # ช่องสำหรับใส่ความคิดเห็นและคำตอบที่ถูกต้อง
@@ -5181,6 +6021,19 @@ with gr.Blocks(
                         placeholder="ใส่คำตอบที่ถูกต้องที่นี่...",
                         lines=3,
                         visible=False
+                    )
+
+                # Source relevance rating
+                with gr.Row():
+                    source_relevance = gr.Radio(
+                        choices=[
+                            ("🎯 แหล่งข้อมูลเกี่ยวข้องสูง", "high"),
+                            ("📊 แหล่งข้อมูลเกี่ยวข้องปานกลาง", "medium"),
+                            ("❌ แหล่งข้อมูลไม่เกี่ยวข้อง", "low")
+                        ],
+                        value="high",
+                        label="📎 ความเกี่ยวข้องของแหล่งข้อมูล",
+                        visible=True
                     )
 
                 with gr.Row():
@@ -5206,68 +6059,104 @@ with gr.Blocks(
 
         # ==================== FEEDBACK EVENT HANDLERS ====================
 
+        def on_feedback_category_change(category):
+            """เมื่อเปลี่ยนประเภท feedback"""
+            if category in ["incorrect", "incomplete"]:
+                return (
+                    gr.update(visible=True),   # corrected_answer
+                    gr.update(visible=True),   # submit_feedback_btn
+                    gr.update(visible=True),   # feedback_status
+                    "กรุณาระบุคำตอบที่ถูกต้อง..."
+                )
+            else:
+                return (
+                    gr.update(visible=False),  # corrected_answer
+                    gr.update(visible=True),   # submit_feedback_btn
+                    gr.update(visible=True),   # feedback_status
+                    "กำลังส่ง feedback..."
+                )
+
         def on_good_feedback():
             """เมื่อกดปุ่ม 👍"""
             return (
-                gr.update(visible=True),  # submit_feedback_btn
-                gr.update(visible=True),  # feedback_status
-                gr.update(visible=False),  # corrected_answer
+                gr.update(value="correct"),    # feedback_category
+                gr.update(visible=False),      # corrected_answer
+                gr.update(visible=True),       # submit_feedback_btn
+                gr.update(visible=True),       # feedback_status
                 "กำลังส่ง feedback ว่าคำตอบถูกต้อง..."
             )
 
         def on_bad_feedback():
             """เมื่อกดปุ่ม 👎"""
             return (
-                gr.update(visible=True),  # submit_feedback_btn
-                gr.update(visible=True),  # feedback_status
-                gr.update(visible=True),  # corrected_answer
-                "กรุณาระบุคำตอบที่ถูกต้อง (ถ้าจำเป็น)"
+                gr.update(value="incorrect"),  # feedback_category
+                gr.update(visible=True),       # corrected_answer
+                gr.update(visible=True),       # submit_feedback_btn
+                gr.update(visible=True),       # feedback_status
+                "กรุณาระบุคำตอบที่ถูกต้อง..."
             )
 
-        def submit_feedback_handler(feedback_type, question, answer, user_comment, corrected_answer, model):
-            """ส่ง feedback ไปยังฐานข้อมูล"""
+        def submit_feedback_handler(category, rating, question, answer, user_comment, corrected_answer, model, source_relevance):
+            """Enhanced feedback handler ส่ง feedback ไปยังฐานข้อมูล"""
             if not question or not answer:
                 return "❌ ไม่พบข้อมูลการสนทนา กรุณาถามคำถามใหม่"
 
-            # กำหนดประเภท feedback
-            if feedback_type == "good":
+            # สร้าง detailed feedback comment
+            detailed_comment = f"Category: {category}, Rating: {rating}/5, Source Relevance: {source_relevance}"
+            if user_comment.strip():
+                detailed_comment += f", Comment: {user_comment}"
+
+            # กำหนดประเภท feedback ตาม category
+            if category == "correct":
                 f_type = "good"
-                comment = user_comment
                 corrected = ""
-            else:  # bad
+            else:
                 f_type = "bad"
-                comment = user_comment
                 corrected = corrected_answer if corrected_answer else "ไม่ได้ระบุ"
 
             # บันทึกลงฐานข้อมูล
-            if save_feedback(question, answer, f_type, comment, corrected, model, ""):
-                return f"✅ ขอบคุณสำหรับ feedback! คำตอบนี้ถูกบันทึกเพื่อปรับปรุงระบบแล้ว"
+            if save_feedback(question, answer, f_type, detailed_comment, corrected, model, ""):
+
+                # ถ้ามี corrected answer ให้นำไปปรับปรุง RAG ทันที
+                if corrected and corrected != "ไม่ได้ระบุ":
+                    apply_feedback_to_rag(question, corrected, confidence=rating/5.0)
+
+                # ถ้า rating ต่ำมาก ให้ log เพื่อการวิเคราะห์
+                if rating <= 2:
+                    logging.warning(f"⚠️ Low quality response detected: Rating={rating}, Category={category}")
+
+                return f"✅ ขอบคุณสำหรับ feedback ระดับ {rating}/5! คำตอบนี้ถูกบันทึกเพื่อปรับปรุงระบบแล้ว"
             else:
                 return "❌ เกิดข้อผิดพลาดในการบันทึก feedback กรุณาลองใหม่"
 
-        # เก็บ feedback type ปัจจุบัน
-        feedback_type_state = gr.State("")
+        # Enhanced Feedback Event Handlers
+        feedback_category.change(
+            fn=on_feedback_category_change,
+            inputs=[feedback_category],
+            outputs=[corrected_answer, submit_feedback_btn, feedback_status, feedback_status]
+        )
 
-        # เชื่อมต่อ events สำหรับ feedback
         good_feedback_btn.click(
-            fn=lambda: [gr.update(visible=True), gr.update(visible=True), gr.update(visible=False), "กำลังส่ง feedback ว่าคำตอบถูกต้อง...", "good"],
+            fn=on_good_feedback,
             inputs=[],
-            outputs=[submit_feedback_btn, feedback_status, corrected_answer, feedback_status, feedback_type_state]
+            outputs=[feedback_category, corrected_answer, submit_feedback_btn, feedback_status, feedback_status]
         )
 
         bad_feedback_btn.click(
-            fn=lambda: [gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), "กรุณาระบุคำตอบที่ถูกต้อง (ถ้าจำเป็น)", "bad"],
+            fn=on_bad_feedback,
             inputs=[],
-            outputs=[submit_feedback_btn, feedback_status, corrected_answer, feedback_status, feedback_type_state]
+            outputs=[feedback_category, corrected_answer, submit_feedback_btn, feedback_status, feedback_status]
         )
 
         submit_feedback_btn.click(
             fn=submit_feedback_handler,
-            inputs=[feedback_type_state, current_question, current_answer, user_comment, corrected_answer, selected_model],
+            inputs=[feedback_category, rating_slider, current_question, current_answer,
+                   user_comment, corrected_answer, selected_model, source_relevance],
             outputs=[feedback_status]
         ).then(
-            fn=lambda: [gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), "", ""],
-            outputs=[submit_feedback_btn, feedback_status, corrected_answer, user_comment, user_comment]
+            fn=lambda: [gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
+                       gr.update(value=3), gr.update(value="correct"), ""],
+            outputs=[submit_feedback_btn, feedback_status, corrected_answer, rating_slider, feedback_category, user_comment]
         )
 
         # ==================== TAG MANAGEMENT EVENT HANDLERS ====================

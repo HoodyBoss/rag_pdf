@@ -10,7 +10,11 @@
       "Bash(git push)",
       "Bash(git push:*)",
       "Bash(git checkout:*)",
-      "Bash(del:*)"
+      "Bash(del:*)",
+      "Bash(pip uninstall:*)",
+      "Bash(new_envScriptsactivate)",
+      "Bash(call:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []
