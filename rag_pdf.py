@@ -182,24 +182,97 @@ def force_release_chromadb():
         # Close any existing connections
         try:
             if 'collection' in globals():
+                collection = None
                 del collection
             if 'chroma_client' in globals():
+                chroma_client = None
                 del chroma_client
             log_with_time("Closed existing ChromaDB connections")
         except:
             pass
 
-        # Cleanup lock files
+        # Cleanup lock files more aggressively
         cleanup_database_locks()
 
-        # Force garbage collection
+        # Kill any Python processes that might be holding the lock
+        import subprocess
+        import psutil
+        import os
+
+        try:
+            current_pid = os.getpid()
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    if proc.info['pid'] != current_pid and proc.info['name'] == 'python.exe':
+                        cmdline = ' '.join(proc.info['cmdline'] or [])
+                        if 'rag_pdf.py' in cmdline or 'chromadb' in cmdline.lower():
+                            log_with_time(f"Killing process {proc.info['pid']} that might be holding DB lock")
+                            proc.terminate()
+                            proc.wait(timeout=3)
+                except:
+                    pass
+        except:
+            pass
+
+        # Force garbage collection multiple times
         import gc
+        gc.collect()
         gc.collect()
 
         log_with_time("✅ Force release completed")
         return True
     except Exception as e:
         log_with_time(f"Force release failed: {e}")
+        return False
+
+def move_database_to_temp():
+    """Move locked database to temp location to avoid conflicts"""
+    try:
+        import shutil
+        import tempfile
+
+        if os.path.exists(TEMP_VECTOR):
+            # Create temp directory
+            temp_dir = tempfile.mkdtemp(prefix="chromadb_backup_")
+            temp_db_path = os.path.join(temp_dir, "chromadb")
+
+            log_with_time(f"Moving locked DB to temp location: {temp_db_path}")
+
+            # Move the entire database directory
+            shutil.move(TEMP_VECTOR, temp_db_path)
+
+            # Create empty database directory
+            os.makedirs(TEMP_VECTOR, exist_ok=True)
+
+            log_with_time(f"✅ Database moved to: {temp_db_path}")
+            return temp_db_path
+        return None
+    except Exception as e:
+        log_with_time(f"Failed to move database: {e}")
+        return None
+
+def create_fresh_database():
+    """Create a completely fresh database to avoid lock issues"""
+    try:
+        import shutil
+        import tempfile
+
+        log_with_time("Creating fresh database to avoid lock issues...")
+
+        # If database exists, move it to temp first
+        moved_path = move_database_to_temp()
+
+        # Create new empty database directory
+        os.makedirs(TEMP_VECTOR, exist_ok=True)
+
+        # Wait a moment for file system to sync
+        import time
+        time.sleep(1)
+
+        log_with_time("✅ Fresh database created successfully")
+        return True
+    except Exception as e:
+        log_with_time(f"Failed to create fresh database: {e}")
         return False
 
 # Clean up locks before initializing database
@@ -1970,6 +2043,7 @@ def restore_vector_db(backup_name=None):
     Args:
         backup_name: ชื่อโฟลเดอร์ backup (ถ้าไม่ระบุจะใช้ล่าสุด)
     """
+    global TEMP_VECTOR
     try:
         if backup_name is None:
             # หา backup ล่าสุด
@@ -1986,19 +2060,80 @@ def restore_vector_db(backup_name=None):
             logging.error(f"ไม่พบ backup: {backup_name}")
             return False
 
-        # Force release ChromaDB before restore
-        force_release_chromadb()
-        time.sleep(1)  # Wait for files to be released
+        # Try multiple strategies to restore database
+        restore_success = False
+        restore_method = ""
 
-        # สำรองข้อมูลปัจจุบันก่อน restore
-        backup_vector_db()
+        # Strategy 1: Force release and restore
+        try:
+            log_with_time("Strategy 1: Force release and restore")
+            force_release_chromadb()
+            time.sleep(2)  # Wait longer for files to be released
 
-        # ลบข้อมูลปัจจุบันและกู้คืนจาก backup
-        if os.path.exists(TEMP_VECTOR):
-            shutil.rmtree(TEMP_VECTOR)
+            # สำรองข้อมูลปัจจุบันก่อน restore
+            backup_vector_db()
 
-        shutil.copytree(backup_path, TEMP_VECTOR)
-        log_with_time(f"กู้คืนข้อมูลสำเร็จจาก: {backup_name}")
+            # ลบข้อมูลปัจจุบันและกู้คืนจาก backup
+            if os.path.exists(TEMP_VECTOR):
+                shutil.rmtree(TEMP_VECTOR)
+
+            shutil.copytree(backup_path, TEMP_VECTOR)
+            log_with_time(f"กู้คืนข้อมูลสำเร็จจาก: {backup_name}")
+            restore_success = True
+            restore_method = "force_release"
+        except Exception as e1:
+            log_with_time(f"Strategy 1 failed: {e1}")
+
+        # Strategy 2: Move database and create fresh
+        if not restore_success:
+            try:
+                log_with_time("Strategy 2: Move database and create fresh")
+
+                # Move locked database to temp
+                moved_path = move_database_to_temp()
+
+                # Create fresh database
+                create_fresh_database()
+
+                # Copy backup to fresh database
+                if os.path.exists(TEMP_VECTOR):
+                    shutil.rmtree(TEMP_VECTOR)
+                shutil.copytree(backup_path, TEMP_VECTOR)
+
+                log_with_time(f"กู้คืนข้อมูลสำเร็จจาก: {backup_name} (fresh database)")
+                restore_success = True
+                restore_method = "fresh_database"
+            except Exception as e2:
+                log_with_time(f"Strategy 2 failed: {e2}")
+
+        # Strategy 3: Use new timestamp path
+        if not restore_success:
+            try:
+                log_with_time("Strategy 3: Use new timestamp path")
+
+                # Create new database path with timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                new_db_path = f"./data/chromadb_restored_{timestamp}"
+
+                if os.path.exists(new_db_path):
+                    shutil.rmtree(new_db_path)
+
+                shutil.copytree(backup_path, new_db_path)
+
+                # Update global TEMP_VECTOR to new path
+                TEMP_VECTOR = new_db_path
+
+                log_with_time(f"กู้คืนข้อมูลสำเร็จจาก: {backup_name} (new path: {new_db_path})")
+                restore_success = True
+                restore_method = "new_path"
+            except Exception as e3:
+                log_with_time(f"Strategy 3 failed: {e3}")
+
+        if not restore_success:
+            log_with_time("❌ All restore strategies failed")
+            return False
+
+        log_with_time(f"✅ Restore successful using method: {restore_method}")
 
         # รีโหลด collection
         global collection
