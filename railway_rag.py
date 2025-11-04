@@ -263,32 +263,32 @@ def create_chunks(text: str, source_name: str, chunk_size: int = 1000, overlap: 
     return chunks
 
 def get_system_status():
-    """Get system status"""
+    """Get system status as formatted string"""
     try:
         if not mongodb_rag:
-            return {
-                "mongodb_connected": False,
-                "embedding_model_loaded": False,
-                "database_stats": {},
-                "status": "Not initialized"
-            }
+            return """📋 System Status:
+❌ MongoDB: Not connected
+❌ Embedding Model: Not loaded
+📊 Database: No stats available
+⚠️ Status: System not initialized"""
 
         stats = mongodb_rag.get_database_stats()
 
-        return {
-            "mongodb_connected": True,
-            "embedding_model_loaded": embed_model is not None,
-            "database_stats": stats,
-            "status": "Ready"
-        }
+        return f"""📋 System Status:
+✅ MongoDB: Connected
+✅ Embedding Model: {'Loaded' if embed_model else 'Not loaded'}
+📊 Database: {stats.get('database_name', 'Unknown')}
+📄 Documents: {stats.get('documents_count', 0)}
+🔍 Embeddings: {stats.get('embeddings_count', 0)}
+📋 Metadata: {stats.get('metadata_count', 0)}
+✅ Status: Ready for use"""
 
     except Exception as e:
-        return {
-            "mongodb_connected": False,
-            "embedding_model_loaded": False,
-            "database_stats": {},
-            "status": f"Error: {str(e)}"
-        }
+        return f"""📋 System Status:
+❌ MongoDB: Connection failed
+❌ Embedding Model: Not available
+📊 Database: No access
+⚠️ Status: Error - {str(e)}"""
 
 def health_check():
     """Health check endpoint"""
@@ -396,10 +396,11 @@ def create_interface():
             with gr.Column(scale=1):
                 gr.Markdown("## 📊 System Status")
 
-                status_display = gr.JSON(
+                status_display = gr.Textbox(
                     label="📋 Database Information",
-                    value={},
-                    container=True
+                    value="Loading system status...",
+                    interactive=False,
+                    lines=8
                 )
 
                 refresh_btn = gr.Button("🔄 Refresh Status", size="sm")
@@ -496,11 +497,17 @@ def main():
 
     logger.info(f"🌐 Starting web server on {host}:{port}")
 
+    # Configure for Docker/Railway deployment
+    share_link = os.getenv('ENV', 'development') == 'production'
+
     app.launch(
         server_name=host,
         server_port=port,
-        share=False,
-        show_api=False
+        share=share_link,
+        show_api=False,
+        inbrowser=False,
+        quiet=True,
+        favicon_path=None
     )
 
 if __name__ == "__main__":

@@ -30,6 +30,8 @@ ENV PYTHONPATH=/app
 ENV HOST=0.0.0.0
 ENV PORT=7860
 ENV LOG_LEVEL=INFO
+ENV ENV=development
+ENV GRADIO_SERVER_NAME=0.0.0.0
 
 # Start command
 CMD ["python", "start_rag_with_retry.py"]
