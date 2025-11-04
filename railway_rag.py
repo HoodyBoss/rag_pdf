@@ -21,15 +21,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import RAG components
+MONGODB_AVAILABLE = False
+
 try:
     from mongodb_rag import MongoDBRAG
     from sentence_transformers import SentenceTransformer
     import requests
     MONGODB_AVAILABLE = True
-    logger.info("✅ MongoDB RAG components imported successfully")
+    logger.info("MongoDB RAG components imported successfully")
 except ImportError as e:
+    logger.error(f"MongoDB RAG components import failed: {e}")
+    logger.error("Please ensure mongodb_rag.py is in the same directory")
+    logger.error("Dependencies: pip install pymongo[srv] sentence-transformers")
     MONGODB_AVAILABLE = False
-    logger.error(f"❌ MongoDB RAG components import failed: {e}")
 
 # Global variables
 mongodb_rag = None
@@ -40,22 +44,34 @@ def initialize_system():
     global mongodb_rag, embed_model
 
     try:
+        # Check if MongoDB RAG is available
+        if not MONGODB_AVAILABLE:
+            logger.error("MongoDB RAG not available - cannot initialize system")
+            return False
+
         # Initialize MongoDB RAG
         mongodb_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
         db_name = os.getenv('DATABASE_NAME', 'rag_pdf_railway')
 
-        logger.info(f"🔌 Initializing MongoDB RAG...")
+        logger.info(f"Initializing MongoDB RAG...")
+        logger.info(f"MongoDB URI: {mongodb_uri}")
+        logger.info(f"Database: {db_name}")
+
         mongodb_rag = MongoDBRAG(mongodb_uri, db_name)
 
         # Initialize embedding model
-        logger.info(f"🧠 Loading embedding model...")
+        logger.info("Loading embedding model...")
         embed_model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
 
-        logger.info("✅ RAG system initialized successfully")
+        logger.info("RAG system initialized successfully")
         return True
 
     except Exception as e:
-        logger.error(f"❌ System initialization failed: {e}")
+        logger.error(f"System initialization failed: {e}")
+        logger.error("Please check:")
+        logger.error("1. mongodb_rag.py file exists")
+        logger.error("2. MongoDB connection string is correct")
+        logger.error("3. Dependencies are installed")
         return False
 
 def query_rag_system(question: str, top_k: int = 5, min_similarity: float = 0.3):
@@ -72,9 +88,9 @@ def query_rag_system(question: str, top_k: int = 5, min_similarity: float = 0.3)
     """
     try:
         if not mongodb_rag:
-            return "❌ RAG system not initialized"
+            return "RAG system not initialized. Please check system logs and try again."
 
-        logger.info(f"🔍 Querying RAG system: '{question}'")
+        logger.info(f"Querying RAG system: '{question}'")
 
         # Search for similar documents
         results = mongodb_rag.search_similar(question, top_k, min_similarity)
