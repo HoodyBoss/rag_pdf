@@ -19,7 +19,14 @@
       "Bash(findstr:*)",
       "Bash(taskkill:*)",
       "Bash(cmd:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(set PYTHONIOENCODING=utf-8:*)",
+      "Bash(echo:*)",
+      "Bash(.env.example)",
+      "Bash(docker run:*)",
+      "Bash(timeout:*)",
+      "Bash(.env)"
     ],
     "deny": [],
     "ask": []

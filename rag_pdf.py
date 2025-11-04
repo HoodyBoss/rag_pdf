@@ -47,6 +47,15 @@ import hashlib
 from collections import deque
 from datetime import datetime
 
+# LightRAG imports for graph reasoning
+try:
+    from lightrag_integration import initialize_lightrag_system, query_with_graph_reasoning, multi_hop_reasoning, get_lightrag_status
+    LIGHT_RAG_AVAILABLE = True
+    logging.info("✅ LightRAG integration loaded successfully")
+except ImportError as e:
+    logging.warning(f"⚠️ LightRAG integration not available: {e}")
+    LIGHT_RAG_AVAILABLE = False
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -291,6 +300,30 @@ try:
     logging.info(f"✅ โหลด collection 'pdf_data' สำเร็จ - จำนวน {count} เรคคอร์ด")
     logging.info(f"📁 Database path: {TEMP_VECTOR}")
     logging.info(f"💾 Database exists: {os.path.exists(TEMP_VECTOR)}")
+
+    # ตรวจสอบว่ามีข้อมูลจริงหรือไม่
+    if count == 0:
+        logging.warning("⚠️ Collection is empty! Checking for data persistence issues...")
+
+        # เรียกใช้ฟังก์ชันตรวจสอบ
+        from fix_database_persistence import scan_collection_directories, get_sqlite_collection_info, reconstruct_collection
+
+        collection_dirs = scan_collection_directories()
+        sqlite_collections = get_sqlite_collection_info()
+
+        sqlite_ids = {coll[0] for coll in sqlite_collections}
+        has_data_dirs = [col['id'] for col in collection_dirs if col['has_data']]
+
+        if sqlite_collections and has_data_dirs:
+            logging.info("🔧 Attempting to recover data from file system...")
+            # พยายากใช้ข้อมูลจาก directories ที่มีข้อมูล
+            for coll_id, coll_name in sqlite_collections:
+                if coll_id in has_data_dirs:
+                    logging.info(f"   Trying to restore: {coll_name}")
+                    # TODO: Implement data recovery from directories
+        else:
+            logging.warning("❌ No recoverable data found - database appears to be empty")
+
 except Exception as e:
     # ถ้าไม่มีให้สร้างใหม่
     logging.info(f"❌ ไม่พบ collection ที่มีอยู่ - กำลังสร้างใหม่: {str(e)}")
@@ -3129,6 +3162,187 @@ def query_rag(question: str, chat_llm: str = "gemma3:latest", show_source: bool 
         # Return empty stream instead of None
         return ({"message": {"content": f"❌ LLM call failed: {str(e)}"}} for _ in range(1))
 
+async def query_rag_with_lightrag(
+    question: str,
+    chat_llm: str = "gemma3:latest",
+    show_source: bool = False,
+    formal_style: bool = False,
+    use_graph_reasoning: bool = False,
+    reasoning_mode: str = "hybrid"
+):
+    """
+    Enhanced RAG query with LightRAG graph reasoning capabilities
+
+    Args:
+        question: User's question
+        chat_llm: LLM model to use
+        show_source: Whether to show source information
+        formal_style: Whether to use formal response style
+        use_graph_reasoning: Whether to use LightRAG graph reasoning
+        reasoning_mode: LightRAG reasoning mode ("naive", "local", "global", "hybrid")
+    """
+    global summarize, enhanced_rag
+
+    if not LIGHT_RAG_AVAILABLE or not use_graph_reasoning:
+        # Fallback to standard query_rag
+        logging.info("🔄 Using standard RAG (LightRAG not available or disabled)")
+        return query_rag(question, chat_llm, show_source, formal_style)
+
+    try:
+        log_with_time("🧠 Starting LightRAG-enhanced query...")
+
+        # Initialize LightRAG system if needed
+        try:
+            await initialize_lightrag_system()
+        except Exception as e:
+            logging.warning(f"⚠️ LightRAG initialization failed, using standard RAG: {e}")
+            return query_rag(question, chat_llm, show_source, formal_style)
+
+        # Perform graph reasoning query
+        lightrag_result = await query_with_graph_reasoning(question, reasoning_mode)
+
+        if "error" in lightrag_result:
+            logging.warning(f"⚠️ LightRAG query failed, using standard RAG: {lightrag_result['error']}")
+            return query_rag(question, chat_llm, show_source, formal_style)
+
+        # Extract graph reasoning result
+        graph_answer = lightrag_result.get("result", "")
+        graph_insights = lightrag_result.get("graph_insights", {})
+        processing_time = lightrag_result.get("processing_time", 0)
+
+        log_with_time(f"✅ LightRAG query completed in {processing_time:.2f}s")
+        log_with_time(f"🧠 Graph insights: {graph_insights}")
+
+        # Build enhanced response combining standard RAG and graph reasoning
+        standard_answer = query_rag(question, chat_llm, show_source, formal_style)
+
+        # Extract text from standard answer stream
+        standard_text = ""
+        for chunk in standard_answer:
+            if "message" in chunk and "content" in chunk["message"]:
+                standard_text += chunk["message"]["content"]
+
+        # Combine answers
+        if graph_answer and graph_answer != "Error":
+            combined_answer = f"""🧠 **Graph Reasoning Analysis:**
+{graph_answer}
+
+📚 **Traditional RAG Analysis:**
+{standard_text}
+
+---
+*This response combines graph-based reasoning with traditional document retrieval for comprehensive analysis.*"""
+        else:
+            combined_answer = standard_text
+
+        # Return as stream for compatibility
+        return ({"message": {"content": combined_answer}} for _ in range(1))
+
+    except Exception as e:
+        logging.error(f"❌ LightRAG-enhanced query failed: {e}")
+        # Fallback to standard RAG
+        return query_rag(question, chat_llm, show_source, formal_style)
+
+def query_rag_with_multi_hop(
+    question: str,
+    chat_llm: str = "gemma3:latest",
+    show_source: bool = False,
+    formal_style: bool = False,
+    hop_count: int = 2
+):
+    """
+    Multi-hop reasoning query using LightRAG
+
+    Args:
+        question: Initial question
+        chat_llm: LLM model to use
+        show_source: Whether to show source information
+        formal_style: Whether to use formal response style
+        hop_count: Number of reasoning hops
+    """
+    if not LIGHT_RAG_AVAILABLE:
+        # Fallback to standard query_rag
+        logging.info("🔄 Using standard RAG (LightRAG not available)")
+        return query_rag(question, chat_llm, show_source, formal_style)
+
+    try:
+        import asyncio
+
+        log_with_time(f"🔄 Starting multi-hop reasoning query (hops: {hop_count})...")
+
+        # Run async multi-hop query
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        try:
+            result = loop.run_until_complete(multi_hop_reasoning(question, hop_count))
+        finally:
+            loop.close()
+
+        if "error" in result:
+            logging.warning(f"⚠️ Multi-hop query failed, using standard RAG: {result['error']}")
+            return query_rag(question, chat_llm, show_source, formal_style)
+
+        # Format multi-hop result
+        synthesis = result.get("final_synthesis", "No synthesis available")
+        hop_results = result.get("hop_results", [])
+
+        formatted_result = f"""🔄 **Multi-Hop Reasoning Analysis ({hop_count} hops):**
+
+{synthesis}
+
+**Reasoning Steps:**"""
+
+        for i, hop in enumerate(hop_results):
+            hop_text = hop.get("result", "")[:500]  # Limit length
+            formatted_result += f"""
+*Hop {i+1}:* {hop_text}..."""
+
+        formatted_result += f"""
+
+---
+*This response uses multi-hop reasoning to explore relationships and implications beyond the initial query.*"""
+
+        # Return as stream for compatibility
+        return ({"message": {"content": formatted_result}} for _ in range(1))
+
+    except Exception as e:
+        logging.error(f"❌ Multi-hop query failed: {e}")
+        # Fallback to standard RAG
+        return query_rag(question, chat_llm, show_source, formal_style)
+
+def get_lightrag_system_status():
+    """Get comprehensive LightRAG system status"""
+    if not LIGHT_RAG_AVAILABLE:
+        return {
+            "status": "❌ LightRAG Not Available",
+            "version": "N/A",
+            "graph_built": False,
+            "chroma_records": "N/A"
+        }
+
+    try:
+        # Get LightRAG status using synchronous function
+        status = get_lightrag_status()
+
+        # Get ChromaDB record count
+        chroma_count = collection.count() if collection else 0
+
+        return {
+            "status": "✅ LightRAG Available",
+            "lightrag_status": status,
+            "chroma_records": chroma_count,
+            "graph_available": os.path.exists("./data/lightrag")
+        }
+
+    except Exception as e:
+        logging.error(f"❌ Failed to get LightRAG status: {e}")
+        return {
+            "status": "⚠️ LightRAG Error",
+            "error": str(e),
+            "chroma_records": collection.count() if collection else 0
+        }
+
 # UI Event Handlers
 def handle_file_selection(files):
     """
@@ -4882,16 +5096,59 @@ def export_feedback():
 
 def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = False, formal_style: bool = False,
                        send_to_discord: bool = False, send_to_line: bool = False, send_to_facebook: bool = False,
-                       line_user_id: str = "", fb_user_id: str = ""):
+                       line_user_id: str = "", fb_user_id: str = "", use_graph_reasoning: bool = False,
+                       reasoning_mode: str = "hybrid", multi_hop_enabled: bool = False, hop_count: int = 2):
     """
-    อินเทอร์เฟซแชทบอทแบบ streaming
+    อินเทอร์เฟซแชทบอทแบบ streaming with LightRAG support
     """
     user_message = history[-1]["content"]
 
     # ส่งคืนคำถามปัจจุบันสำหรับ feedback
     current_q = user_message
 
-    stream= query_rag(user_message, chat_llm=llm_model, show_source=show_source, formal_style=formal_style)
+    # Choose query method based on LightRAG settings
+    if use_graph_reasoning:
+        if multi_hop_enabled:
+            # Use multi-hop reasoning
+            logging.info(f"🔄 Using Multi-Hop LightRAG (hops: {hop_count}) for query: {user_message}")
+            stream = query_rag_with_multi_hop(
+                user_message,
+                chat_llm=llm_model,
+                show_source=show_source,
+                formal_style=formal_style,
+                hop_count=hop_count
+            )
+        else:
+            # Use standard graph reasoning
+            logging.info(f"🧠 Using LightRAG Graph Reasoning (mode: {reasoning_mode}) for query: {user_message}")
+            import asyncio
+
+            # Run async query in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(
+                    query_rag_with_lightrag(
+                        user_message,
+                        chat_llm=llm_model,
+                        show_source=show_source,
+                        formal_style=formal_style,
+                        use_graph_reasoning=True,
+                        reasoning_mode=reasoning_mode
+                    )
+                )
+                # Convert result to stream format
+                if isinstance(result, str):
+                    # If result is already a string, create a simple stream
+                    stream = ({"message": {"content": result}} for _ in range(1))
+                else:
+                    # If result is a stream generator, use it directly
+                    stream = result
+            finally:
+                loop.close()
+    else:
+        # Use standard RAG
+        stream = query_rag(user_message, chat_llm=llm_model, show_source=show_source, formal_style=formal_style)
 
     history.append({"role": "assistant", "content": ""})
     full_answer=""
@@ -5009,7 +5266,54 @@ def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = F
     # Final yield with complete data
     yield history, current_q, full_answer, json.dumps([]) if show_source else ""
 
+# Global LightRAG functions for UI access
+def update_lightrag_status():
+    """Get LightRAG system status for UI display"""
+    try:
+        if LIGHT_RAG_AVAILABLE:
+            status = get_lightrag_system_status()
+            if status.get("status") == "✅ LightRAG Available":
+                return f"""✅ LightRAG พร้อมใช้งาน
+• ChromaDB Records: {status.get('chroma_records', 'N/A')}
+• Graph Available: {'✅' if status.get('graph_available') else '❌'}
+• Mode: Mock Implementation (พร้อมอัปเกรดเมื่อ API สมบูรณ์)"""
+            else:
+                return f"⚠️ LightRAG มีปัญหา: {status.get('error', 'Unknown error')}"
+        else:
+            return "❌ LightRAG ไม่สามารถใช้งานได้ (Package ไม่พร้อม)"
+    except Exception as e:
+        return f"❌ ตรวจสอบสถานะไม่ได้: {str(e)}"
 
+def test_graph_reasoning_interface():
+    """Test LightRAG functionality for UI"""
+    try:
+        import asyncio
+
+        async def run_test():
+            test_query = "ทดสอบวิเคราะห์ความสัมพันธ์ในระบบ"
+            result = await query_with_graph_reasoning(test_query, mode="hybrid")
+
+            if result.get("error"):
+                return f"❌ ทดสอบล้มเหลว: {result['error']}"
+
+            return f"""✅ ทดสอบสำเร็จ!
+• Query: {test_query}
+• Processing Time: {result.get('processing_time', 0):.2f}s
+• Response Length: {len(result.get('result', ''))} chars
+• Mock Mode: {'ใช่' if result.get('mock') else 'ไม่ใช่'}
+• Insights: {result.get('graph_insights', {})}"""
+
+        # Run async function
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(run_test())
+            return result, gr.update(visible=True)
+        finally:
+            loop.close()
+
+    except Exception as e:
+        return f"❌ ทดสอบล้มเหลว: {str(e)}", gr.update(visible=True)
 
 # Gradio interface
 
@@ -6162,6 +6466,96 @@ with gr.Blocks(
                 info="ใช้ภาษาที่เป็นทางการและสุภาพมากขึ้น"
             )
 
+        # LightRAG Graph Reasoning Options
+        with gr.Accordion("🧠 LightRAG Graph Reasoning (Advanced)", open=False):
+            gr.Markdown("""
+            **🔬 เพิ่มความฉลาดด้วย Graph Reasoning:**
+            • วิเคราะห์ความสัมพันธ์ระหว่าง concepts
+            • Multi-hop reasoning สำหรับคำถามซับซ้อน
+            • แสดงความเชื่อมโยงที่ซ่อนอยู่ในข้อมูล
+            """)
+
+            with gr.Row():
+                use_graph_reasoning = gr.Checkbox(
+                    label="🧠 เปิดใช้ Graph Reasoning",
+                    value=False,
+                    info="ใช้ LightRAG วิเคราะห์ความสัมพันธ์และเชื่อมโยง concepts"
+                )
+
+            with gr.Row():
+                reasoning_mode = gr.Dropdown(
+                    choices=[
+                        ("🔄 Hybrid (แนะนำ)", "hybrid"),
+                        ("🎯 Local (เฉพาะเจาะจง)", "local"),
+                        ("🌐 Global (ครอบคลุม)", "global"),
+                        ("⚡ Naive (เร็ว)", "naive")
+                    ],
+                    value="hybrid",
+                    label="📊 โหมดการวิเคราะห์",
+                    info="เลือกรูปแบบการวิเคราะห์ Graph Reasoning"
+                )
+
+            with gr.Row():
+                multi_hop_enabled = gr.Checkbox(
+                    label="🔄 Multi-Hop Reasoning",
+                    value=False,
+                    info="วิเคราะห์ความสัมพันธ์ขั้นสูงหลาย step"
+                )
+
+                hop_count = gr.Slider(
+                    minimum=2,
+                    maximum=5,
+                    value=2,
+                    step=1,
+                    label="🔢 จำนวน Hop",
+                    visible=False,
+                    info="จำนวนขั้นตอนการวิเคราะห์ Multi-Hop"
+                )
+
+            # Toggle hop count visibility
+            def toggle_hop_count(enabled):
+                return gr.update(visible=enabled)
+
+            multi_hop_enabled.change(
+                fn=toggle_hop_count,
+                inputs=multi_hop_enabled,
+                outputs=hop_count
+            )
+
+            # LightRAG Status Display
+            with gr.Row():
+                lightrag_status_display = gr.Textbox(
+                    label="📊 สถานะ LightRAG",
+                    value="กำลังตรวจสอบ...",
+                    interactive=False,
+                    lines=2
+                )
+
+            # Update status on interface load
+            demo.load(
+                fn=update_lightrag_status,
+                inputs=[],
+                outputs=[lightrag_status_display]
+            )
+
+            # Test Graph Reasoning Button
+            with gr.Row():
+                test_lightrag_btn = gr.Button("🧪 ทดสอบ Graph Reasoning", variant="secondary", size="sm")
+                lightrag_test_output = gr.Textbox(
+                    label="ผลการทดสอบ",
+                    interactive=False,
+                    visible=False,
+                    lines=3
+                )
+
+        
+            # Update status on load and test
+            test_lightrag_btn.click(
+                fn=test_graph_reasoning_interface,
+                inputs=[],
+                outputs=[lightrag_test_output, lightrag_test_output]
+            )
+
         # เพิ่มตัวเลือกสำหรับการส่งคำตอบไปยังแพลตฟอร์มอื่น
         with gr.Row():
             gr.Markdown("### 📤 ส่งคำตอบไปยังแพลตฟอร์ม:")
@@ -6358,7 +6752,8 @@ with gr.Blocks(
             fn=chatbot_interface,
             inputs=[chatbot, selected_model, show_source_checkbox, formal_style_checkbox,
                    send_to_discord_checkbox, send_to_line_checkbox, send_to_facebook_checkbox,
-                   line_user_id_input, fb_user_id_input],
+                   line_user_id_input, fb_user_id_input, use_graph_reasoning, reasoning_mode,
+                   multi_hop_enabled, hop_count],
             outputs=[chatbot, current_question, current_answer, current_sources]
         )
         clear_chat.click(lambda: [], None, chatbot, queue=False)
@@ -6557,4 +6952,12 @@ with gr.Blocks(
 if __name__ == "__main__":
     # ล้างข้อมูล ออกจากระบบ ก่อน เริ่ม Start Web
     clear_vector_db_and_images()
+
+    # Update LightRAG status on load
+    try:
+        initial_lightrag_status = update_lightrag_status()
+        logging.info(f"Initial LightRAG Status: {initial_lightrag_status}")
+    except Exception as e:
+        logging.warning(f"Failed to update LightRAG status on load: {e}")
+
     demo.launch()

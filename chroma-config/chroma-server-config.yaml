@@ -1,0 +1,42 @@
+# ChromaDB Configuration
+server:
+  host: "0.0.0.0"
+  port: 8000
+  grpc_port: 50051
+  workers: 1
+  timeout_keep_alive: 30
+  ssl_enabled: false
+
+# Database configuration
+database:
+  # Use SQLite for persistence (Docker volume)
+  path: "/chroma/chroma"
+
+  # Connection pool settings
+  connection_pool:
+    size: 10
+    timeout: 30
+
+  # Index configuration
+  index:
+    type: "hnsw"
+    parameters:
+      space: "cosine"
+      ef_construction: 200
+      m: 16
+
+# Logging
+logging:
+  level: "INFO"
+  format: "json"
+
+# Performance settings
+performance:
+  # Memory usage
+  memory_limit: "2GB"
+
+  # Batch processing
+  batch_size: 100
+
+  # Caching
+  cache_size: 1000

@@ -1,0 +1,15 @@
+# Core RAG dependencies
+pymongo[srv]==4.14.1
+sentence-transformers==5.1.2
+numpy==1.26.4
+
+# Web interface
+gradio==4.44.0
+python-dotenv==1.0.1
+
+# PDF processing
+PyMuPDF==1.24.0
+
+# Additional utilities
+requests==2.32.5
+logging

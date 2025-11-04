@@ -1,0 +1,43 @@
+[build]
+builder = "python"
+
+[deploy]
+startCommand = "python railway_rag.py"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[[services]]
+name = "rag-pdf-app"
+
+[services.variables]
+PORT = "7860"
+MONGODB_URI = "${{MONGODB_URI}}"
+DATABASE_NAME = "rag_pdf_railway"
+OLLAMA_URL = "http://localhost:11434"
+DEFAULT_MODEL = "gemma3:12b"
+LOG_LEVEL = "INFO"
+
+[[services.env]]
+ENV = "production"
+
+[healthChecks]
+path = "/health"
+port = 7860
+method = "GET"
+initialDelaySeconds = 30
+periodSeconds = 30
+timeoutSeconds = 10
+successThreshold = 1
+failureThreshold = 3
+
+[scaling]
+minInstances = 1
+maxInstances = 3
+
+[resources]
+memoryMb = 1024
+cpuMillis = 500
+
+[[mounts]]
+source = "/data"
+target = "/app/data"
