@@ -70,7 +70,7 @@ git push origin main
 
 ### 🔧 **Technical Specifications**
 
-- **Framework**: Gradio + Python 3.11
+- **Framework**: Gradio + Python 3.10.19 (matching conda env ragpdf)
 - **Vector Storage**: ChromaDB (persistent)
 - **Embeddings**: Sentence Transformers (multilingual)
 - **LLM Integration**: Ollama (gemma2:9b) with fallback
