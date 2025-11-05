@@ -15,7 +15,7 @@ COPY requirements_railway.txt .
 RUN pip install --no-cache-dir -r requirements_railway.txt
 
 # Copy application files
-COPY railway_rag_full.py .
+COPY rag_pdf.py .
 COPY mongodb_rag.py .
 COPY .env.example .env
 
@@ -40,4 +40,4 @@ ENV GRADIO_SERVER_NAME=0.0.0.0
 # ENV ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
 # Start command - use the enhanced system with authentication
-CMD ["python", "railway_rag_full.py"]
+CMD ["python", "rag_pdf.py"]
