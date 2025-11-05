@@ -890,10 +890,10 @@ def query_rag_system(question: str, session_id: str, top_k: int = 5, min_similar
         # Validate session
         session = SecureAuthManager.validate_session(session_id)
         if not session:
-            return "❌ Session expired. Please login again.", 5.0, gr.update(visible=False), ""
+            return "❌ Session expired. Please login again."
 
         if not hybrid_vector_store or not hybrid_vector_store.is_available():
-            return "❌ Hybrid RAG system not available.", 5.0, gr.update(visible=False), ""
+            return "❌ Hybrid RAG system not available."
 
         logger.info(f"🔍 Query from {session['username']}: '{question}'")
 
@@ -904,7 +904,7 @@ def query_rag_system(question: str, session_id: str, top_k: int = 5, min_similar
         filtered_results = [r for r in results if r['score'] >= min_similarity]
 
         if not filtered_results:
-            response = """🤔 ไม่พบข้อมูลที่เกี่ยวข้องกับคำถามของคุณ
+            return """🤔 ไม่พบข้อมูลที่เกี่ยวข้องกับคำถามของคุณ
 
 ✨ **คำแนะน:**
 • ใช้คำศัพท์อื่นที่ใกล้เคียง
@@ -912,7 +912,6 @@ def query_rag_system(question: str, session_id: str, top_k: int = 5, min_similar
 • ลองคำถามที่เจำเพาะกว่า
 
 💾 **Persistent Storage:** ChromaDB + MongoDB 🚀"""
-            return response, 5.0, gr.update(visible=False), ""
 
         # Add to conversation memory
         enhanced_rag.add_to_memory(question, "Processing...", [r['content'] for r in filtered_results])
@@ -942,15 +941,16 @@ def query_rag_system(question: str, session_id: str, top_k: int = 5, min_similar
 
         # List available documents
         response += "---\n📚 **เอกสารในระบบ:**\n"
-        stats = hybrid_vector_store.get_document_stats()
-        response += f"• มีเอกสารทั้งหมด {stats.get('total_documents', 0)} chunks ในระบบ\n"
+        documents = mongodb_rag.list_documents()
+        for doc in documents:
+            chunks = doc.get('total_chunks', 0)
+            response += f"• {doc.get('source_name', 'Unknown')} ({chunks} chunks)\n"
 
-        # Return response with feedback components enabled
-        return response, 5.0, gr.update(visible=True), ""
+        return response
 
     except Exception as e:
         logger.error(f"❌ Query failed: {e}")
-        return f"❌ เกิดข้อผิดพลาด: {str(e)}", 5.0, gr.update(visible=False), ""
+        return f"❌ เกิดข้อผิดพลาด: {str(e)}"
 
 def upload_file_to_mongodb(file, session_id: str):
     """Upload file with session validation"""
@@ -960,32 +960,16 @@ def upload_file_to_mongodb(file, session_id: str):
         if not session:
             return "❌ Session expired. Please login again."
 
-        if not hybrid_vector_store or not hybrid_vector_store.is_available():
+        if not mongodb_rag:
             return "❌ RAG system not available."
 
         if file is None:
             return "❌ กรุณาเลือกไฟล์"
 
-        # Handle Gradio file upload (could be file object or list)
-        if isinstance(file, list):
-            if not file:
-                return "❌ กรุณาเลือกไฟล์"
-            file = file[0]  # Take first file if multiple
-
-        # Get file info from Gradio file object
-        if hasattr(file, 'name'):
-            file_path = file.name
-            file_name = os.path.basename(file_path)
-            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
-        elif hasattr(file, 'orig_name'):
-            # Gradio temp file case
-            file_name = file.orig_name
-            file_path = file.name
-            file_size = len(file.read()) if hasattr(file, 'read') else 0
-            if hasattr(file, 'seek'):
-                file.seek(0)  # Reset file pointer
-        else:
-            return "❌ Invalid file format"
+        # Get file info
+        file_path = file.name
+        file_name = os.path.basename(file_path)
+        file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
 
         logger.info(f"📄 Processing file: {file_name} ({file_size:,} bytes)")
 
@@ -1009,23 +993,11 @@ def upload_file_to_mongodb(file, session_id: str):
         if not chunks:
             return "❌ ไม่สามารถสร้าง chunks จากข้อความ"
 
-        # Store in Hybrid Vector Store (ChromaDB + MongoDB)
-        doc_ids = []
-        for i, chunk in enumerate(chunks):
-            doc_id = hybrid_vector_store.add_document(
-                content=chunk['text'],
-                metadata={
-                    'source': file_name,
-                    'type': 'document',
-                    'chunk_index': i,
-                    'total_chunks': len(chunks),
-                    'created_at': datetime.now().isoformat()
-                }
-            )
-            doc_ids.append(doc_id)
+        # Store in MongoDB
+        doc_id = mongodb_rag.store_document(chunks, file_name)
 
         # Get updated stats
-        stats = hybrid_vector_store.get_document_stats()
+        stats = mongodb_rag.get_database_stats()
 
         return f"""✅ อัปโหลด {file_name} สำเร็จ!
 
@@ -1033,11 +1005,12 @@ def upload_file_to_mongodb(file, session_id: str):
 • ชื่อไฟล์: {file_name}
 • ขนาดไฟล์: {file_size:,} bytes
 • จำนวน chunks: {len(chunks)}
-• Document IDs: {len(doc_ids)} chunks stored
+• Document ID: {doc_id}
 
-🗄️ **Hybrid Storage:**
-• Total Documents: {stats.get('total_documents', 0)}
-• Database: {os.getenv('DATABASE_NAME', 'Unknown')}
+🗄️ **ฐานข้อมูล:**
+• Documents: {stats.get('documents_count', 0)}
+• Chunks: {stats.get('embeddings_count', 0)}
+• Database: {stats.get('database_name', 'Unknown')}
 
 ✅ ไฟล์พร้อมใช้งานในระบบแล้ว!"""
 
@@ -1089,21 +1062,21 @@ def create_chunks(text: str, source_name: str, chunk_size: int = 1000, overlap: 
 def get_system_status():
     """Get system status"""
     try:
-        if not hybrid_vector_store or not hybrid_vector_store.is_available():
+        if not mongodb_rag:
             return """📋 System Status:
 ❌ MongoDB: Not connected
-❌ ChromaDB: Not connected
 ❌ Embedding Model: Not loaded
 ⚠️ Status: System not initialized"""
 
-        stats = hybrid_vector_store.get_document_stats()
+        stats = mongodb_rag.get_database_stats()
 
         return f"""📋 System Status:
 ✅ MongoDB: Connected
-✅ ChromaDB: Connected
-✅ Embedding Model: {'Loaded' if hybrid_vector_store.embedding_model else 'Not loaded'}
-📊 Database: {os.getenv('DATABASE_NAME', 'Unknown')}
-📄 Documents: {stats.get('total_documents', 0)}
+✅ Embedding Model: {'Loaded' if embed_model else 'Not loaded'}
+📊 Database: {stats.get('database_name', 'Unknown')}
+📄 Documents: {stats.get('documents_count', 0)}
+🔍 Embeddings: {stats.get('embeddings_count', 0)}
+📋 Metadata: {stats.get('metadata_count', 0)}
 ✅ Status: Ready for secure access"""
 
     except Exception as e:
@@ -1161,186 +1134,6 @@ def handle_logout(session_id: str):
             gr.update(value=f"❌ Logout error: {str(e)}"),
             {"session_id": "", "username": "", "role": "user"}
         )
-
-def process_google_sheets(sheets_url: str, session_id: str):
-    """Process Google Sheets URL"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return "❌ Invalid session"
-
-        if not sheets_url:
-            return "❌ Please enter Google Sheets URL"
-
-        # TODO: Implement Google Sheets processing
-        return f"✅ Google Sheets processing for: {sheets_url}\n[Function to be implemented]"
-
-    except Exception as e:
-        logger.error(f"Google Sheets processing error: {e}")
-        return f"❌ Error processing Google Sheets: {str(e)}"
-
-def get_uploaded_files(session_id: str):
-    """Get list of uploaded files"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return []
-
-        files = hybrid_vector_store.list_documents()
-        return [f"{doc['filename']} ({doc['upload_date']})" for doc in files]
-
-    except Exception as e:
-        logger.error(f"Get files error: {e}")
-        return []
-
-def delete_selected_file(selected_files: list, session_id: str):
-    """Delete selected file"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return [], "❌ Invalid session"
-
-        if not selected_files:
-            return get_uploaded_files(session_id), "❌ Please select file to delete"
-
-        filename = selected_files[0].split(" (")[0]  # Extract filename
-        result = hybrid_vector_store.delete_document(filename)
-
-        if result['success']:
-            updated_files = get_uploaded_files(session_id)
-            return updated_files, f"✅ {result['message']}"
-        else:
-            return get_uploaded_files(session_id), f"❌ {result['message']}"
-
-    except Exception as e:
-        logger.error(f"Delete file error: {e}")
-        return get_uploaded_files(session_id), f"❌ Error deleting file: {str(e)}"
-
-def submit_feedback(question: str, rating: str, session_id: str):
-    """Submit feedback for chat response"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return "❌ Invalid session"
-
-        if not question:
-            return "❌ No question to provide feedback for"
-
-        # TODO: Implement feedback storage in MongoDB
-        feedback_value = "positive" if "👍" in rating else "negative"
-        return f"✅ Feedback submitted: {feedback_value}"
-
-    except Exception as e:
-        logger.error(f"Submit feedback error: {e}")
-        return f"❌ Error submitting feedback: {str(e)}"
-
-def create_new_tag(name: str, color: str, description: str, session_id: str):
-    """Create new tag"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return "❌ Invalid session", ""
-
-        if not name:
-            return "❌ Tag name is required", ""
-
-        # TODO: Implement tag creation in MongoDB
-        return f"✅ Tag '{name}' created successfully", get_all_tags()
-
-    except Exception as e:
-        logger.error(f"Create tag error: {e}")
-        return f"❌ Error creating tag: {str(e)}", get_all_tags()
-
-def delete_selected_tags(selected_tags: list, session_id: str):
-    """Delete selected tags"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return [], "❌ Invalid session", get_all_tags()
-
-        if not selected_tags:
-            return get_all_tags(), "❌ Please select tags to delete", get_all_tags()
-
-        # TODO: Implement tag deletion in MongoDB
-        return get_all_tags(), f"✅ Deleted {len(selected_tags)} tag(s)", get_all_tags()
-
-    except Exception as e:
-        logger.error(f"Delete tags error: {e}")
-        return get_all_tags(), f"❌ Error deleting tags: {str(e)}", get_all_tags()
-
-def search_tags_function(query: str):
-    """Search tags"""
-    try:
-        if not query:
-            return get_all_tags()
-
-        # TODO: Implement tag search in MongoDB
-        all_tags = get_all_tags()
-        return [tag for tag in all_tags if query.lower() in tag.lower()]
-
-    except Exception as e:
-        logger.error(f"Search tags error: {e}")
-        return []
-
-def get_all_tags():
-    """Get all tags"""
-    try:
-        # TODO: Implement tag retrieval from MongoDB
-        return ["example_tag", "test_tag", "document_tag"]
-
-    except Exception as e:
-        logger.error(f"Get tags error: {e}")
-        return []
-
-def get_feedback_analytics(session_id: str):
-    """Get feedback analytics"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return "❌ Invalid session", "❌ Invalid session"
-
-        # TODO: Implement feedback analytics from MongoDB
-        feedback_display = "## Feedback Summary\n\n📊 Total feedback: 0\n👍 Positive: 0\n👎 Negative: 0\n\n### Recent Feedback\nNo feedback data available yet."
-
-        analytics_display = "## Analytics Dashboard\n\n### Chat Statistics\n- Total queries: 0\n- Average response time: 0s\n- User satisfaction rate: 0%\n\n### Document Usage\n- Most accessed documents: N/A\n- Search trends: N/A"
-
-        return feedback_display, analytics_display
-
-    except Exception as e:
-        logger.error(f"Get feedback analytics error: {e}")
-        return f"❌ Error loading feedback: {str(e)}", f"❌ Error loading analytics: {str(e)}"
-
-def export_feedback_data(format_type: str, session_id: str):
-    """Export feedback data"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return "❌ Invalid session"
-
-        # TODO: Implement feedback export
-        return f"✅ Feedback exported as {format_type.upper()}\n[Function to be implemented]"
-
-    except Exception as e:
-        logger.error(f"Export feedback error: {e}")
-        return f"❌ Error exporting feedback: {str(e)}"
-
-def get_analytics_dashboard(session_id: str):
-    """Get analytics dashboard"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return "❌ Invalid session"
-
-        # TODO: Implement comprehensive analytics
-        return "## Analytics Dashboard\n\n### System Overview\n- Total documents: 0\n- Total queries: 0\n- Active users: 1\n\n### Usage Trends\n- Daily queries: 0\n- Popular documents: N/A\n- Search patterns: N/A"
-
-    except Exception as e:
-        logger.error(f"Get analytics error: {e}")
-        return f"❌ Error loading analytics: {str(e)}"
-
-def clear_all_data(session_id: str):
-    """Clear all data from system"""
-    try:
-        if not SecureAuthManager.validate_session(session_id):
-            return "❌ Invalid session", [], []
-
-        # TODO: Implement data clearing with confirmation
-        return "✅ All data cleared successfully", [], get_all_tags()
-
-    except Exception as e:
-        logger.error(f"Clear data error: {e}")
-        return f"❌ Error clearing data: {str(e)}", [], get_all_tags()
 
 def create_secure_interface():
     """Create secure admin interface"""
@@ -1427,235 +1220,54 @@ def create_secure_interface():
             # Session state
             session_state = gr.State({"session_id": "", "username": "", "role": "user"})
 
-            # Tabbed Interface
-            with gr.Tabs():
-                # Tab 1: Document Upload & Management
-                with gr.TabItem("📚 Document Upload"):
-                    with gr.Row():
-                        with gr.Column(scale=2):
-                            gr.Markdown("## 📁 Upload Documents")
-                            gr.Markdown("Add PDF, DOCX, TXT, MD files and Google Sheets to the knowledge base")
+            with gr.Row():
+                with gr.Column(scale=2):
+                    gr.Markdown("## 🔍 Search Documents")
 
-                            file_input = gr.File(
-                                label="Choose Files",
-                                file_types=[".pdf", ".docx", ".txt", ".md"],
-                                file_count="multiple"
-                            )
-
-                            with gr.Row():
-                                clear_before_upload = gr.Checkbox(
-                                    label="Clear existing documents before upload",
-                                    value=False
-                                )
-                                enhanced_rag = gr.Checkbox(
-                                    label="Use Enhanced RAG with Memory",
-                                    value=True
-                                )
-
-                            upload_btn = gr.Button("📤 Upload & Process", variant="primary")
-                            upload_status = gr.Textbox(
-                                label="Upload Status",
-                                interactive=False,
-                                lines=5
-                            )
-
-                        with gr.Column(scale=1):
-                            gr.Markdown("## 📊 System Status")
-
-                            status_display = gr.Textbox(
-                                label="System Information",
-                                value="Loading...",
-                                interactive=False,
-                                lines=8
-                            )
-
-                            with gr.Row():
-                                refresh_btn = gr.Button("🔄 Refresh", size="sm")
-                                logout_btn = gr.Button("🚪 Logout", variant="secondary", size="sm")
-
-                    # Google Sheets Integration
-                    gr.Markdown("---")
-                    gr.Markdown("## 📊 Google Sheets Integration")
-                    gr.Markdown("Import data from Google Sheets to the knowledge base")
-
-                    with gr.Row():
-                        sheets_url = gr.Textbox(
-                            label="Google Sheets URL",
-                            placeholder="https://docs.google.com/spreadsheets/d/...",
-                            lines=2
-                        )
-                        sheets_btn = gr.Button("📊 Import Google Sheets", variant="secondary")
-
-                    sheets_status = gr.Textbox(
-                        label="Google Sheets Status",
-                        interactive=False,
+                    question_input = gr.Textbox(
+                        label="Ask about your documents",
+                        placeholder="What would you like to know? (e.g., 'What are the main findings?')",
                         lines=3
                     )
 
-                    # Database Operations
-                    gr.Markdown("---")
-                    with gr.Accordion("🗄️ Database Operations", open=False):
-                        with gr.Row():
-                            backup_btn = gr.Button("💾 Create Backup", variant="secondary")
-                            restore_btn = gr.Button("🔄 Restore Backup", variant="secondary")
-                            clear_all_btn = gr.Button("🗑️ Clear All Data", variant="stop")
-
-                        db_status = gr.Textbox(
-                            label="Database Operations Status",
-                            interactive=False,
-                            lines=3
-                        )
-
-                # Tab 2: Chat Interface
-                with gr.TabItem("💬 Chat"):
                     with gr.Row():
-                        with gr.Column(scale=2):
-                            gr.Markdown("## 🔍 Ask Questions About Your Documents")
+                        search_btn = gr.Button("🔍 Search", variant="primary")
+                        clear_btn = gr.Button("🗑️ Clear")
 
-                            question_input = gr.Textbox(
-                                label="Your Question",
-                                placeholder="What would you like to know? (e.g., 'What are the main findings?')",
-                                lines=3
-                            )
+                    result_output = gr.Markdown(label="Search Results")
 
-                            with gr.Row():
-                                search_btn = gr.Button("🔍 Search", variant="primary")
-                                clear_btn = gr.Button("🗑️ Clear")
+                with gr.Column(scale=1):
+                    gr.Markdown("## 📊 System Status")
 
-                            result_output = gr.Markdown(label="Search Results")
+                    status_display = gr.Textbox(
+                        label="System Information",
+                        value="Loading...",
+                        interactive=False,
+                        lines=8
+                    )
 
-                        with gr.Column(scale=1):
-                            gr.Markdown("## ⚙️ Chat Configuration")
-
-                            model_dropdown = gr.Dropdown(
-                                label="Select Model",
-                                choices=["gemma3:12b", "llama3.1:8b", "qwen2.5:7b"],
-                                value="gemma3:12b"
-                            )
-
-                            rag_mode = gr.Dropdown(
-                                label="RAG Mode",
-                                choices=["Standard RAG", "Enhanced RAG with Memory"],
-                                value="Enhanced RAG with Memory"
-                            )
-
-                            with gr.Row():
-                                show_sources = gr.Checkbox(
-                                    label="Show Source Citations",
-                                    value=True
-                                )
-                                formal_style = gr.Checkbox(
-                                    label="Formal Style",
-                                    value=False
-                                )
-
-                            gr.Markdown("---")
-                            gr.Markdown("## 📊 Rate this Answer")
-
-                            feedback_rating = gr.Slider(
-                                minimum=1,
-                                maximum=5,
-                                step=1,
-                                label="Rating",
-                                value=5
-                            )
-
-                            feedback_comment = gr.Textbox(
-                                label="Additional Feedback (Optional)",
-                                lines=2,
-                                placeholder="Any additional comments about the answer..."
-                            )
-
-                            submit_feedback_btn = gr.Button("📊 Submit Feedback", variant="secondary")
-                            feedback_status = gr.Textbox(
-                                label="Feedback Status",
-                                interactive=False,
-                                lines=2
-                            )
-
-                # Tab 3: Tag Management
-                with gr.TabItem("🏷️ Tag Management"):
                     with gr.Row():
-                        with gr.Column(scale=1):
-                            gr.Markdown("## ➕ Create New Tag")
+                        refresh_btn = gr.Button("🔄 Refresh", size="sm")
+                        logout_btn = gr.Button("🚪 Logout", variant="secondary", size="sm")
 
-                            tag_name = gr.Textbox(
-                                label="Tag Name",
-                                placeholder="Enter tag name"
-                            )
+            gr.Markdown("---")
 
-                            tag_color = gr.ColorPicker(
-                                label="Tag Color",
-                                value="#1f77b4"
-                            )
+            with gr.Row():
+                gr.Markdown("## 📁 Upload Documents")
+                gr.Markdown("Add PDF and text files to the knowledge base")
 
-                            tag_description = gr.Textbox(
-                                label="Tag Description",
-                                placeholder="Describe this tag",
-                                lines=2
-                            )
+                file_input = gr.File(
+                    label="Choose File",
+                    file_types=[".pdf", ".txt", ".md"],
+                    file_count="single"
+                )
 
-                            create_tag_btn = gr.Button("🏷️ Create Tag", variant="primary")
-                            tag_create_status = gr.HTML("")
-
-                        with gr.Column(scale=2):
-                            gr.Markdown("## 📋 All Tags")
-
-                            tag_search = gr.Textbox(
-                                label="Search Tags",
-                                placeholder="Search tags by name or description"
-                            )
-
-                            tag_choices = gr.Dropdown(
-                                label="Select Tag to Delete",
-                                choices=[],
-                                interactive=True
-                            )
-
-                            delete_tag_btn = gr.Button("🗑️ Delete Selected Tag", variant="stop")
-                            tag_status = gr.HTML("")
-
-                            tag_display = gr.DataFrame(
-                                headers=["ID", "Name", "Color", "Description", "Created At"],
-                                datatype=["str", "str", "str", "str", "str"],
-                                value=[],
-                                interactive=False
-                            )
-
-                # Tab 4: Feedback & Analytics
-                with gr.TabItem("📊 Feedback & Analytics"):
-                    with gr.Row():
-                        with gr.Column(scale=1):
-                            gr.Markdown("## 📈 Feedback Statistics")
-
-                            feedback_stats = gr.Textbox(
-                                label="Statistics Overview",
-                                value="Loading statistics...",
-                                interactive=False,
-                                lines=8
-                            )
-
-                            refresh_stats_btn = gr.Button("🔄 Refresh Statistics", variant="secondary")
-
-                        with gr.Column(scale=2):
-                            gr.Markdown("## 📋 Recent Feedback")
-
-                            feedback_display = gr.DataFrame(
-                                headers=["Question", "Answer", "Rating", "Comment", "Timestamp"],
-                                datatype=["str", "str", "number", "str", "str"],
-                                value=[],
-                                interactive=False
-                            )
-
-                            with gr.Row():
-                                export_feedback_btn = gr.Button("📤 Export Feedback", variant="secondary")
-                                clear_feedback_btn = gr.Button("🗑️ Clear All Feedback", variant="stop")
-
-                            feedback_action_status = gr.Textbox(
-                                label="Action Status",
-                                interactive=False,
-                                lines=2
-                            )
+                upload_btn = gr.Button("📤 Upload & Process", variant="secondary")
+                upload_status = gr.Textbox(
+                    label="Upload Status",
+                    interactive=False,
+                    lines=5
+                )
 
             gr.Markdown("---")
 
@@ -1678,7 +1290,7 @@ def create_secure_interface():
                 **⚠️ Store these credentials securely!**
                 """)
 
-        # Event handlers for login/logout
+        # Event handlers
         login_btn.click(
             fn=handle_login,
             inputs=[username_input, password_input],
@@ -1691,44 +1303,29 @@ def create_secure_interface():
             outputs=[login_section, main_app, auth_message, session_state]
         )
 
-        # Tab 1: Document Upload handlers
+        search_btn.click(
+            fn=lambda q, state: query_rag_system(q, state.get("session_id", "")),
+            inputs=[question_input, session_state],
+            outputs=[result_output]
+        )
+
+        clear_btn.click(
+            fn=lambda: ("", ""),
+            outputs=[question_input, result_output]
+        )
+
+        refresh_btn.click(
+            fn=get_system_status,
+            outputs=[status_display]
+        )
+
         upload_btn.click(
             fn=lambda f, state: upload_file_to_mongodb(f, state.get("session_id", "")),
             inputs=[file_input, session_state],
             outputs=[upload_status]
         )
 
-        sheets_btn.click(
-            fn=lambda url, state: process_google_sheets(url, state.get("session_id", "")),
-            inputs=[sheets_url, session_state],
-            outputs=[upload_status]
-        )
-
-      
-      
-        # Tab 2: Chat handlers
-        search_btn.click(
-            fn=lambda q, state: query_rag_system(q, state.get("session_id", "")),
-            inputs=[question_input, session_state],
-            outputs=[result_output, feedback_rating, submit_feedback_btn, feedback_status]
-        )
-
-        submit_feedback_btn.click(
-            fn=lambda rating, q, state: submit_feedback(q, str(rating), state.get("session_id", "")),
-            inputs=[feedback_rating, question_input, session_state],
-            outputs=[feedback_status]
-        )
-
-        clear_btn.click(
-            fn=lambda: ("", "", 5.0, gr.update(visible=False), ""),
-            outputs=[question_input, result_output, feedback_rating, submit_feedback_btn, feedback_status]
-        )
-
-        # TODO: Implement Tab 3 and Tab 4 handlers when UI components are fully defined
-        # Tab 3: Tag Management handlers (commented out - components not fully defined)
-        # Tab 4: Feedback & Analytics handlers (commented out - components not fully defined)
-
-        # Load initial data on app start
+        # Load initial status
         demo.load(
             fn=get_system_status,
             outputs=[status_display]
@@ -1759,7 +1356,7 @@ def main():
     app.launch(
         server_name=host,
         server_port=port,
-        share=False,
+        share=True,
         show_api=False,
         inbrowser=False,
         quiet=True,

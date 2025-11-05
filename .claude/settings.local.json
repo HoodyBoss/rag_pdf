@@ -32,7 +32,12 @@
       "Bash(conda activate:*)",
       "Bash(conda env list:*)",
       "Bash(C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe -m pip install:*)",
-      "Bash(C:\\miniconda3\\Scripts\\conda.exe install:*)"
+      "Bash(C:\\miniconda3\\Scripts\\conda.exe install:*)",
+      "Bash(C:Userspompr.condaenvsragpdfpython.exe railway_rag_secure.py)",
+      "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\":*)",
+      "Bash(copy:*)",
+      "Bash(set:*)",
+      "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" -m py_compile:*)"
     ],
     "deny": [],
     "ask": []
