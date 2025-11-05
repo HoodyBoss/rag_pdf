@@ -142,7 +142,7 @@ threadpoolctl==3.6.0
 tokenizers==0.22.1
 tomli==2.3.0
 tomlkit==0.13.3
-torch==2.7.1+cu118
+# torch==2.7.1+cu118
 torchaudio==2.7.1+cu118
 torchvision==0.22.1+cu118
 tqdm==4.67.1

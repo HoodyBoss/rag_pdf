@@ -1,6 +1,4 @@
 aenum==3.1.16
-aimm @ git+https://github.com/AIMM-Project/aimm.git@cd33082dcd5e8b20edaf3f7c55d0f5280b03699d
-aimm-ems @ git+https://github.com/AIMM-Project/aimm-ems-adapter.git@f292e8019ea8e767d3113916ba69428e6bc211f5
 aiofiles==24.1.0
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.2
