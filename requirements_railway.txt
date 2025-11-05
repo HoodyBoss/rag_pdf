@@ -25,3 +25,4 @@ discord.py
 flask
 line-bot-sdk
 cryptography
+python-docx
