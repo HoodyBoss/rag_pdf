@@ -39,7 +39,8 @@
       "Bash(set:*)",
       "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" -m py_compile:*)",
       "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" -m py_compile rag_pdf.py)",
-      "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" railway_app.py)"
+      "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" railway_app.py)",
+      "Bash(xargs -r docker stop:*)"
     ],
     "deny": [],
     "ask": []
