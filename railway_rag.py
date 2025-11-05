@@ -50,7 +50,7 @@ def initialize_system():
             return False
 
         # Initialize MongoDB RAG
-        mongodb_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
+        mongodb_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27020/')
         db_name = os.getenv('DATABASE_NAME', 'rag_pdf_railway')
 
         logger.info(f"Initializing MongoDB RAG...")
@@ -382,7 +382,7 @@ def create_interface():
                 gr.Markdown("## 🔍 Ask Your Documents")
 
                 question_input = gr.Textbox(
-                    label="💬 What would you like to know?",
+                    label="What would you like to know?",
                     placeholder="Ask me anything about your documents... (e.g., 'What are the main findings?' or 'Explain the key concepts')",
                     lines=3
                 )
@@ -391,13 +391,13 @@ def create_interface():
                     search_btn = gr.Button("🔍 Search Documents", variant="primary")
                     clear_btn = gr.Button("🗑️ Clear")
 
-                result_output = gr.Markdown(label="📋 Search Results")
+                result_output = gr.Markdown(label="Search Results")
 
             with gr.Column(scale=1):
                 gr.Markdown("## 📊 System Status")
 
                 status_display = gr.Textbox(
-                    label="📋 Database Information",
+                    label="Database Information",
                     value="Loading system status...",
                     interactive=False,
                     lines=8
@@ -412,21 +412,21 @@ def create_interface():
             gr.Markdown("Add your PDF and text files to the knowledge base for AI-powered search")
 
             file_input = gr.File(
-                label="📄 Choose File",
+                label="Choose File",
                 file_types=[".pdf", ".txt", ".md"],
                 file_count="single"
             )
 
-            upload_btn = gr.Button("📤 Upload & Process", variant="secondary")
+            upload_btn = gr.Button("Upload & Process", variant="secondary")
             upload_status = gr.Textbox(
-                label="📋 Upload Status",
+                label="Upload Status",
                 interactive=False,
                 lines=3
             )
 
         gr.Markdown("---")
 
-        with gr.Accordion("ℹ️ System Information", open=False):
+        with gr.Accordion("System Information", open=False):
             gr.Markdown("""
             ### 🛠️ Technology Stack
             - **🗄️ MongoDB Atlas** - Vector database for persistent storage
@@ -503,11 +503,12 @@ def main():
     app.launch(
         server_name=host,
         server_port=port,
-        share=share_link,
+        share=True,  # Force share for Docker environment
         show_api=False,
         inbrowser=False,
         quiet=True,
-        favicon_path=None
+        favicon_path=None,
+        server_name="0.0.0.0"
     )
 
 if __name__ == "__main__":

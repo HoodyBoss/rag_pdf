@@ -28,7 +28,11 @@
       "Bash(timeout:*)",
       "Bash(.env)",
       "Bash(netstat:*)",
-      "Bash(docker-compose:*)"
+      "Bash(docker-compose:*)",
+      "Bash(conda activate:*)",
+      "Bash(conda env list:*)",
+      "Bash(C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe -m pip install:*)",
+      "Bash(C:\\miniconda3\\Scripts\\conda.exe install:*)"
     ],
     "deny": [],
     "ask": []

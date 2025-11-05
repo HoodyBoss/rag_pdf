@@ -19,7 +19,8 @@ def wait_for_mongodb(max_retries=30, retry_delay=5):
 
             if initialize_system():
                 status = get_system_status()
-                if status.get("mongodb_connected"):
+                # Check if status contains "Connected" (string-based check)
+                if "Connected" in status:
                     logger.info("MongoDB is ready!")
                     return True
 

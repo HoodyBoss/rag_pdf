@@ -11,3 +11,4 @@ discord.py
 flask
 line-bot-sdk
 requests
+cryptography
