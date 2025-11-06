@@ -3164,7 +3164,8 @@ def query_rag(question: str, chat_llm: str = "gemma3:latest", show_source: bool 
         measure_time(api_call_start, "ollama.chat() API call (failed)")
         log_with_time(f"ollama.chat() failed: {e}")
         # Return empty stream instead of None
-        return ({"message": {"content": f"❌ LLM call failed: {str(e)}"}} for _ in range(1))
+        error_msg = f"❌ LLM call failed: {str(e)}"
+        return ({"message": {"content": error_msg}} for _ in range(1))
 
 async def query_rag_with_lightrag(
     question: str,
