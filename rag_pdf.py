@@ -3120,9 +3120,9 @@ def query_rag(question: str, chat_llm: str = "gemma3:latest", show_source: bool 
     health_start = time.time()
     try:
         import requests
-        log_with_time("Checking Ollama health before API call...")
+        logging.info("Checking Ollama health before API call...")
         ollama_api_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-        log_with_time(f"Ollama API URL: {ollama_api_url}")
+        logging.info(f"Ollama API URL: {ollama_api_url}")
         health_check = requests.get(f"{ollama_api_url}/api/tags", timeout=5)
         measure_time(health_start, "Ollama health check")
         log_with_time(f"Ollama health check: Status {health_check.status_code}")
