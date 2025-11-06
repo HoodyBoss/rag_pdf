@@ -92,6 +92,7 @@ FB_VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "YOUR_FB_VERIFY_TOKEN")
 FB_ENABLED = os.getenv("FB_ENABLED", "false").lower() == "true"  # เปิด/ปิด Facebook Messenger
 FB_DEFAULT_MODEL = os.getenv("FB_DEFAULT_MODEL", "gemma3:latest")  # โมเดลเริ่มต้นสำหรับ FB
 FB_WEBHOOK_PORT = int(os.getenv("FB_WEBHOOK_PORT", "5001"))  # Port สำหรับ FB webhook
+FB_WEBHOOK = int(os.getenv("FB_WEBHOOK", "5001"))  # Port สำหรับ FB webhook
 
 # Enhanced RAG Configuration (MemoRAG-like features)
 RAG_MODE = os.getenv("RAG_MODE", "enhanced")  # standard, enhanced
@@ -3120,7 +3121,8 @@ def query_rag(question: str, chat_llm: str = "gemma3:latest", show_source: bool 
     try:
         import requests
         log_with_time("Checking Ollama health before API call...")
-        health_check = requests.get("http://localhost:11434/api/tags", timeout=5)
+        ollama_api_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        health_check = requests.get(f"{ollama_api_url}/api/tags", timeout=5)
         measure_time(health_start, "Ollama health check")
         log_with_time(f"Ollama health check: Status {health_check.status_code}")
         if health_check.status_code == 200:
@@ -5984,7 +5986,7 @@ with gr.Blocks(
 
         def start_fb_ui():
             if start_facebook_bot_thread():
-                return f"Facebook Bot เริ่มทำงานแล้ว! Webhook URL: http://localhost:{FB_WEBHOOK_PORT}/webhook"
+                return f"Facebook Bot เริ่มทำงานแล้ว! Webhook URL: {FB_WEBHOOK}"
             else:
                 return "ไม่สามารถเริ่ม Facebook Bot ได้ ตรวจสอบการตั้งค่าใน .env"
 

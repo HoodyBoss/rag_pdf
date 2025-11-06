@@ -4,7 +4,7 @@
     "buildCommand": "pip install -r requirements.txt"
   },
   "deploy": {
-    "startCommand": "python railway_app.py",
+    "startCommand": "python rag_pdf.py",
     "restartPolicyType": "on_failure",
     "healthcheckPath": "/",
     "port": 7860
@@ -13,6 +13,9 @@
     "HOST": "0.0.0.0",
     "PORT": "7860",
     "PYTHONUNBUFFERED": "1",
-    "DEFAULT_MODEL": "gemma2:9b"
+    "DEFAULT_MODEL": "gemma3:latest",
+    "CHROMA_PATH": "./chroma_db",
+    "CHROMA_PERSISTENT": "true",
+    "RAILWAY_VOLUME_MOUNT": "/app/chroma_db"
   }
 }
