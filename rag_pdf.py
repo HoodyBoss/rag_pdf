@@ -3136,7 +3136,8 @@ def query_rag(question: str, chat_llm: str = "gemma3:latest", show_source: bool 
     except Exception as e:
         log_with_time(f"Ollama health check failed: {e}")
         # Return empty stream instead of None
-        return ({"message": {"content": f"❌ Ollama server error: {str(e)}"}} for _ in range(1))
+        error_msg = f"❌ Ollama server error: {str(e)}"
+        return ({"message": {"content": error_msg}} for _ in range(1))
 
     api_call_start = time.time()
     log_with_time(f"Starting ollama.chat() with model: {chat_llm}")
