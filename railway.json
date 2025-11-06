@@ -16,6 +16,8 @@
     "DEFAULT_MODEL": "gemma3:latest",
     "CHROMA_PATH": "./chroma_db",
     "CHROMA_PERSISTENT": "true",
-    "RAILWAY_VOLUME_MOUNT": "/app/chroma_db"
+    "RAILWAY_VOLUME_MOUNT": "/app/chroma_db",
+    "OLLAMA_URL": "https://ollama-production-8d6d.up.railway.app",
+    "USE_FALLBACK": "true"
   }
 }
