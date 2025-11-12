@@ -811,7 +811,12 @@ sentence_model = SentenceTransformer('intfloat/multilingual-e5-base', device=dev
 # Create directory for storing images
 os.makedirs(TEMP_IMG, exist_ok=True)
 
-sum_tokenizer = MT5Tokenizer.from_pretrained('StelleX/mt5-base-thaisum-text-summarization')
+try:
+    sum_tokenizer = MT5Tokenizer.from_pretrained('StelleX/mt5-base-thaisum-text-summarization')
+    logging.info("✅ MT5 Thai summarization tokenizer loaded successfully")
+except Exception as e:
+    logging.warning(f"⚠️ Failed to load MT5 tokenizer: {e}")
+    sum_tokenizer = None
 sum_model = MT5ForConditionalGeneration.from_pretrained('StelleX/mt5-base-thaisum-text-summarization')
 
 def summarize_content(content: str) -> str:
