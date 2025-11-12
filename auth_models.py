@@ -23,7 +23,7 @@ class AuthManager:
         """Connect to MongoDB"""
         try:
             # Use existing MongoDB connection if available
-            mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+            mongodb_uri = os.getenv("MONGODB_URI", os.getenv("MONGO_URL", "mongodb://localhost:27017"))
             database_name = os.getenv("DATABASE_NAME", "rag_pdf_auth")
 
             self.client = MongoClient(mongodb_uri)
