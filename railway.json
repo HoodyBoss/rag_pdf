@@ -1,7 +1,6 @@
 {
   "build": {
-    "builder": "nixpacks",
-    "buildCommand": "pip install -r requirements_minimal.txt"
+    "builder": "dockerfile"
   },
   "deploy": {
     "startCommand": "python authenticated_app.py",
@@ -21,7 +20,7 @@
     "USE_FALLBACK": "true",
     "MONGODB_URI": "${{MONGO_URL}}",
     "DATABASE_NAME": "rag_pdf_railway",
-    "JWT_SECRET": "your-super-secret-jwt-key-change-this-in-production",
+    "JWT_SECRET": "OI-u97vDjcXUBpU7JuK6ArFlOV1wFOQQhH2223n4X4c",
     "ADMIN_PASSWORD": "admin123"
   }
 }

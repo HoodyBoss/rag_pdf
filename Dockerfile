@@ -9,14 +9,17 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
-COPY requirements_railway.txt .
+COPY requirements_minimal.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements_railway.txt
+RUN pip install --no-cache-dir -r requirements_minimal.txt
 
 # Copy application files
 COPY rag_pdf.py .
 COPY mongodb_rag.py .
+COPY auth_models.py .
+COPY login_page.py .
+COPY authenticated_app.py .
 COPY .env.example .env
 
 # Create data directory
@@ -40,4 +43,4 @@ ENV GRADIO_SERVER_NAME=0.0.0.0
 # ENV ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
 # Start command - use the enhanced system with authentication
-CMD ["python", "rag_pdf.py"]
+CMD ["python", "authenticated_app.py"]
