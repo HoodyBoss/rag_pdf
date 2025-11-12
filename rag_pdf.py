@@ -7558,3 +7558,22 @@ if __name__ == "__main__":
         logging.warning(f"Failed to update LightRAG status on load: {e}")
 
     demo.launch()
+# Wrapper class for authenticated application
+class RAGPDFApplication:
+    """Wrapper class for RAG PDF application"""
+
+    def __init__(self):
+        self.interface = demo
+
+    def create_interface(self):
+        """Create the main RAG PDF interface"""
+        try:
+            return self.interface
+        except Exception as e:
+            logging.error(f"❌ Error creating interface: {e}")
+            return None
+
+    def get_interface(self):
+        """Get the Gradio interface"""
+        return self.interface
+
