@@ -1,6 +1,7 @@
 {
   "build": {
-    "builder": "dockerfile"
+    "builder": "nixpacks",
+    "buildCommand": "pip install -r requirements_minimal.txt && echo 'Build completed at $(date)'"
   },
   "deploy": {
     "startCommand": "python authenticated_app.py",

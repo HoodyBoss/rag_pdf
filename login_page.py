@@ -223,13 +223,34 @@ def get_current_user_info():
     """Get current user information for main app"""
     global CURRENT_USER, AUTH_TOKEN
 
-    if check_session()["logged_in"]:
+    try:
+        # Check if we have a token and user
+        if AUTH_TOKEN and CURRENT_USER:
+            # Validate token
+            if auth_manager.client:
+                payload = auth_manager.validate_token(AUTH_TOKEN)
+                if payload:
+                    return {
+                        "authenticated": True,
+                        "user": CURRENT_USER,
+                        "token": AUTH_TOKEN
+                    }
+            else:
+                # Fallback: if auth_manager not connected, check simple session
+                return {
+                    "authenticated": True,
+                    "user": CURRENT_USER,
+                    "token": AUTH_TOKEN
+                }
+
         return {
-            "authenticated": True,
-            "user": CURRENT_USER,
-            "token": AUTH_TOKEN
+            "authenticated": False,
+            "user": None,
+            "token": None
         }
-    else:
+
+    except Exception as e:
+        logging.error(f"❌ Error in get_current_user_info: {e}")
         return {
             "authenticated": False,
             "user": None,

@@ -165,9 +165,12 @@ class AuthenticatedRAGApp:
 
 def main():
     """Main entry point"""
+    print("🚀 STARTING AUTHENTICATED RAG APP")
     try:
         # Create authenticated application
+        print("📦 Creating AuthenticatedRAGApp...")
         auth_app = AuthenticatedRAGApp()
+        print("✅ AuthenticatedRAGApp created")
 
         # Launch the application
         auth_app.launch(
