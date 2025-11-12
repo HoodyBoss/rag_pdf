@@ -21,6 +21,7 @@ COPY auth_models.py .
 COPY login_page.py .
 COPY authenticated_app.py .
 COPY fix_database_persistence.py .
+COPY version.txt .
 COPY .env.example .env
 
 # Create data directory

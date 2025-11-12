@@ -49,7 +49,8 @@
       "WebFetch(domain:docs.z.ai)",
       "WebSearch",
       "Bash(fix_database_persistence.py)",
-      "Bash(rag_pdf.py)"
+      "Bash(rag_pdf.py)",
+      "Bash(version.txt)"
     ],
     "deny": [],
     "ask": []
