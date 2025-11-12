@@ -129,92 +129,89 @@ def create_login_interface():
         global AUTH_TOKEN
         return AUTH_TOKEN
 
-    def create_login_ui():
-        """Create the complete login interface"""
-
-        with gr.Blocks(title="RAG PDF - Login", css="""
-            .gradio-container {
-                max-width: 400px;
-                margin: 0 auto;
-            }
-            .login-container {
-                padding: 2rem;
-                border-radius: 8px;
-                background: #f8f9fa;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-            .login-header {
-                text-align: center;
-                margin-bottom: 2rem;
-            }
-            .login-form {
-                margin-bottom: 1rem;
-            }
-        """) as login_app:
-
-            with gr.Column(elem_classes=["login-container"]):
-                # Header
-                gr.HTML("""
-                    <div class="login-header">
-                        <h1>🤖 RAG PDF</h1>
-                        <h3>เข้าสู่ระบบสำหรัญ</h3>
-                        <p>กรุณาเข้าสู่ระบบเพื่อใช้งาน RAG PDF</p>
-                    </div>
-                """)
-
-                # Login Form
-                with gr.Row(elem_classes=["login-form"]):
-                    with gr.Column(scale=3):
-                        gr.Markdown("**ชื่อผู้ใช้**")
-
-                    with gr.Column(scale=1):
-                        username_input = gr.Textbox(
-                            placeholder="กรอกชื่อผู้ใช้",
-                            max_lines=1
-                        )
-
-                with gr.Row(elem_classes=["login-form"]):
-                    with gr.Column(scale=3):
-                        gr.Markdown("**รหัสผ่าน**")
-
-                    with gr.Column(scale=1):
-                        password_input = gr.Textbox(
-                            type="password",
-                            placeholder="กรอกรอกรหัสผ่าน",
-                            max_lines=1
-                        )
-
-                # Login Button
-                login_btn = gr.Button("🔐 เข้าสู่ระบบ", variant="primary", size="lg")
-
-                # Status Display
-                login_status = gr.HTML("")
-
-                # Hidden inputs for token storage
-                user_data_json = gr.Textbox(visible=False)
-                token_input = gr.Textbox(visible=False)
-
-            # Login handler
-            def handle_login(username, password):
-                result = login_user(username, password)
-                if isinstance(result, dict) and result.get("success"):
-                    return (
-                        result["message"],
-                        gr.update(visible=True),
-                        gr.update(visible=True),
-                        gr.update(value=json.dumps(result["user"])),
-                        gr.update(value=result["token"]),
-                        gr.update(visible=False)  # Hide form after successful login
-                    )
-                else:
-                    return (result, gr.update(visible=True), gr.update(visible=True), gr.update(""), gr.update(""), gr.update(visible=True))
-
-            # Connect login button
-            login_btn.click(
-                fn=handle_login,
-                inputs=[username_input, password_input],
-                outputs=[login_status, login_btn, username_input, password_input, user_data_json, token_input]
+    def handle_login(username, password):
+        result = login_user(username, password)
+        if isinstance(result, dict) and result.get("success"):
+            return (
+                result["message"],
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(value=json.dumps(result["user"])),
+                gr.update(value=result["token"]),
+                gr.update(visible=False)  # Hide form after successful login
             )
+        else:
+            return (result, gr.update(visible=True), gr.update(visible=True), gr.update(""), gr.update(""), gr.update(visible=True))
+
+    # Create and return the login interface
+    with gr.Blocks(title="RAG PDF - Login", css="""
+        .gradio-container {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .login-container {
+            padding: 2rem;
+            border-radius: 8px;
+            background: #f8f9fa;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .login-form {
+            margin-bottom: 1rem;
+        }
+    """) as login_app:
+
+        with gr.Column(elem_classes=["login-container"]):
+            # Header
+            gr.HTML("""
+                <div class="login-header">
+                    <h1>🤖 RAG PDF</h1>
+                    <h3>เข้าสู่ระบบสำหรัญ</h3>
+                    <p>กรุณาเข้าสู่ระบบเพื่อใช้งาน RAG PDF</p>
+                </div>
+            """)
+
+            # Login Form
+            with gr.Row(elem_classes=["login-form"]):
+                with gr.Column(scale=3):
+                    gr.Markdown("**ชื่อผู้ใช้**")
+
+                with gr.Column(scale=1):
+                    username_input = gr.Textbox(
+                        placeholder="กรอกชื่อผู้ใช้",
+                        max_lines=1
+                    )
+
+            with gr.Row(elem_classes=["login-form"]):
+                with gr.Column(scale=3):
+                    gr.Markdown("**รหัสผ่าน**")
+
+                with gr.Column(scale=1):
+                    password_input = gr.Textbox(
+                        type="password",
+                        placeholder="กรอกรอกรหัสผ่าน",
+                        max_lines=1
+                    )
+
+            # Login Button
+            login_btn = gr.Button("🔐 เข้าสู่ระบบ", variant="primary", size="lg")
+
+            # Status Display
+            login_status = gr.HTML("")
+
+            # Hidden inputs for token storage
+            user_data_json = gr.Textbox(visible=False)
+            token_input = gr.Textbox(visible=False)
+
+        # Connect login button
+        login_btn.click(
+            fn=handle_login,
+            inputs=[username_input, password_input],
+            outputs=[login_status, login_btn, username_input, password_input, user_data_json, token_input]
+        )
 
     return login_app
 
