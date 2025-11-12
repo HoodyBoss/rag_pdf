@@ -20,6 +20,7 @@ COPY mongodb_rag.py .
 COPY auth_models.py .
 COPY login_page.py .
 COPY authenticated_app.py .
+COPY fix_database_persistence.py .
 COPY .env.example .env
 
 # Create data directory

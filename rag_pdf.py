@@ -49,7 +49,8 @@ from datetime import datetime
 
 # Authentication imports
 try:
-    from auth_models import auth_manager, get_current_user_info, require_auth, logout_current_user
+    from auth_models import auth_manager, require_auth
+    from login_page import get_current_user_info, logout_current_user
     AUTH_ENABLED = True
     logging.info("✅ Authentication system loaded successfully")
 except ImportError as e:
@@ -567,7 +568,11 @@ try:
         logging.warning("⚠️ Collection is empty! Checking for data persistence issues...")
 
         # เรียกใช้ฟังก์ชันตรวจสอบ
-        from fix_database_persistence import scan_collection_directories, get_sqlite_collection_info, reconstruct_collection
+        try:
+            from fix_database_persistence import scan_collection_directories, get_sqlite_collection_info, reconstruct_collection
+        except ImportError:
+            logging.warning("⚠️ fix_database_persistence module not found, skipping persistence check")
+            return False
 
         collection_dirs = scan_collection_directories()
         sqlite_collections = get_sqlite_collection_info()
@@ -588,7 +593,7 @@ try:
 except Exception as e:
     # ถ้าไม่มีให้สร้างใหม่
     logging.info(f"❌ ไม่พบ collection ที่มีอยู่ - กำลังสร้างใหม่: {str(e)}")
-    collection = chroma_client.create_collection(name="pdf_data")
+    collection = chroma_client.get_or_create_collection(name="pdf_data")
     logging.info(f"✅ สร้าง collection 'pdf_data' ใหม่สำเร็จ")
 
 # Feedback Database Setup
@@ -1675,9 +1680,12 @@ def clear_vector_db():
     try:
         
        # Clear existing collection to avoid duplicates
-        chroma_client.delete_collection(name="pdf_data")
+        try:
+            chroma_client.delete_collection(name="pdf_data")
+        except:
+            pass  # Collection might not exist
         global collection
-        collection = chroma_client.create_collection(name="pdf_data")
+        collection = chroma_client.get_or_create_collection(name="pdf_data")
 
     except Exception as e:
         return f"เกิดข้อผิดพลาดในการล้างข้อมูล: {str(e)}"
