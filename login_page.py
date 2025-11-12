@@ -22,6 +22,11 @@ def create_login_interface():
             if not auth_manager.client:
                 auth_manager.connect()
 
+            # Check rate limit based on username (before authentication)
+            temp_user_id = f"temp_{username}"
+            if not auth_manager.check_rate_limit(temp_user_id, "login_attempt", limit_per_hour=20):
+                return "❌ คุณได้พยายามเข้าสู่ระบบมากเกินไป กรุณารอสักครู่"
+
             # Authenticate user
             user = auth_manager.authenticate_user(username, password)
 
@@ -43,10 +48,6 @@ def create_login_interface():
             # Update global state
             CURRENT_USER = user
             AUTH_TOKEN = tokens["access_token"]
-
-            # Check rate limit before proceeding
-            if not auth_manager.check_rate_limit(user["user_id"], "login"):
-                return "❌ คุณได้พยายามเข้าสู่ระบบมากเกินไป กรุณารอสักครู่"
 
             # Update user usage
             auth_manager.update_user_usage(user["user_id"], "login", {
@@ -175,26 +176,18 @@ def create_login_interface():
             """)
 
             # Login Form
-            with gr.Row(elem_classes=["login-form"]):
-                with gr.Column(scale=3):
-                    gr.Markdown("**ชื่อผู้ใช้**")
+            username_input = gr.Textbox(
+                label="ชื่อผู้ใช้",
+                placeholder="กรอกชื่อผู้ใช้",
+                max_lines=1
+            )
 
-                with gr.Column(scale=1):
-                    username_input = gr.Textbox(
-                        placeholder="กรอกชื่อผู้ใช้",
-                        max_lines=1
-                    )
-
-            with gr.Row(elem_classes=["login-form"]):
-                with gr.Column(scale=3):
-                    gr.Markdown("**รหัสผ่าน**")
-
-                with gr.Column(scale=1):
-                    password_input = gr.Textbox(
-                        type="password",
-                        placeholder="กรอกรอกรหัสผ่าน",
-                        max_lines=1
-                    )
+            password_input = gr.Textbox(
+                label="รหัสผ่าน",
+                type="password",
+                placeholder="กรอกรหัสผ่าน",
+                max_lines=1
+            )
 
             # Login Button
             login_btn = gr.Button("🔐 เข้าสู่ระบบ", variant="primary", size="lg")
