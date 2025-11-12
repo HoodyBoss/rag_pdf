@@ -26,6 +26,16 @@ class AuthManager:
             mongodb_uri = os.getenv("MONGODB_URI", os.getenv("MONGO_URL", "mongodb://localhost:27017"))
             database_name = os.getenv("DATABASE_NAME", "rag_pdf_auth")
 
+            # Log all environment variables for debugging
+            logging.info("🔍 Environment variables:")
+            logging.info(f"   MONGODB_URI: {os.getenv('MONGODB_URI', 'NOT_SET')}")
+            logging.info(f"   MONGO_URL: {os.getenv('MONGO_URL', 'NOT_SET')}")
+
+            # Log the connection string (mask password)
+            masked_uri = mongodb_uri.replace("rNcxrYpEyxpZajJUidlsZjrVgFqpEDmc", "***PASSWORD***")
+            logging.info(f"📡 Attempting to connect to MongoDB with URI: {masked_uri}")
+            logging.info(f"📊 Database name: {database_name}")
+
             self.client = MongoClient(mongodb_uri)
             self.db = self.client[database_name]
             self.users_collection = self.db["users"]
