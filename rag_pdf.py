@@ -57,8 +57,11 @@ except ImportError:
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
-except ImportError:
+    logging.info("✅ Google Generative AI library available")
+except ImportError as e:
     GEMINI_AVAILABLE = False
+    logging.warning(f"⚠️ Google Generative AI library not available: {e}")
+    logging.info("Install with: pip install google-generativeai")
 
 # LightRAG imports for graph reasoning
 try:
@@ -145,6 +148,9 @@ def get_available_providers() -> list:
         elif config["api_key_required"]:
             api_key = os.getenv(config["api_key_env"])
             if api_key and api_key.strip():
+                # Special check for Gemini - require library too
+                if key == "gemini" and not GEMINI_AVAILABLE:
+                    continue
                 providers.append(key)
         else:
             providers.append(key)
@@ -223,7 +229,9 @@ def call_ai_provider(provider_name: str, model: str, messages: list, stream: boo
 
     elif provider_name == "gemini":
         if not GEMINI_AVAILABLE:
-            raise ImportError("Google Generative AI library not available. Install with: pip install google-generativeai")
+            error_msg = "Google Generative AI library not available. Please install with: pip install google-generativeai"
+            logging.error(error_msg)
+            return ({"message": {"content": error_msg}} for _ in range(1))
 
         api_key = os.getenv(config["api_key_env"])
         if not api_key:
@@ -6774,10 +6782,16 @@ with gr.Blocks(
                     return f"✅ {provider_name} API Key ถูกต้องและพร้อมใช้งาน"
 
                 elif provider_name == "gemini":
-                    genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel('gemini-2.5-flash')
-                    response = model.generate_content("Hello")
-                    return f"✅ {provider_name} API Key ถูกต้องและพร้อมใช้งาน"
+                    if not GEMINI_AVAILABLE:
+                        return f"❌ {provider_name} library ไม่พร้อมใช้งาน กรุณาติดตั้ง: pip install google-generativeai"
+
+                    try:
+                        genai.configure(api_key=api_key)
+                        model = genai.GenerativeModel('gemini-2.5-flash')
+                        response = model.generate_content("Hello")
+                        return f"✅ {provider_name} API Key ถูกต้องและพร้อมใช้งาน"
+                    except Exception as api_error:
+                        return f"❌ {provider_name} API Key ไม่ถูกต้องหรือ library มีปัญหา: {str(api_error)}"
 
                 elif provider_name == "zhipu":
                     client = openai.OpenAI(api_key=api_key, base_url="https://open.bigmodel.cn/api/paas/v4")
@@ -6884,7 +6898,7 @@ with gr.Blocks(
 
         # Check for external providers quickly (no blocking)
         external_providers = []
-        if os.getenv("GEMINI_API_KEY"):
+        if os.getenv("GEMINI_API_KEY") and GEMINI_AVAILABLE:
             external_providers.append("gemini")
         if os.getenv("OPENAI_API_KEY"):
             external_providers.append("chatgpt")

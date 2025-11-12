@@ -43,7 +43,8 @@
       "Bash(xargs -r docker stop:*)",
       "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" -c \"import openai; print(''OpenAI available'')\")",
       "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" -c \"import openai; import google.generativeai as genai; print(''All AI provider libraries are available'')\")",
-      "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" -c \"\nimport os\nprint(''Environment variables:'')\nfor key in [''MINIMAX_API_KEY'', ''MANUS_API_KEY'', ''GEMINI_API_KEY'', ''OPENAI_API_KEY'']:\n    val = os.getenv(key, ''NOT_SET'')\n    print(f''{key}: {\"\"SET\"\" if val != \"\"NOT_SET\"\" else \"\"NOT_SET\"\"}'')\n\")"
+      "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" -c \"\nimport os\nprint(''Environment variables:'')\nfor key in [''MINIMAX_API_KEY'', ''MANUS_API_KEY'', ''GEMINI_API_KEY'', ''OPENAI_API_KEY'']:\n    val = os.getenv(key, ''NOT_SET'')\n    print(f''{key}: {\"\"SET\"\" if val != \"\"NOT_SET\"\" else \"\"NOT_SET\"\"}'')\n\")",
+      "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" -c \"\ntry:\n    import google.generativeai as genai\n    print(''✅ google-generativeai imported successfully'')\n    print(f''Version: {genai.__version__ if hasattr(genai, \"\"__version__\"\") else \"\"unknown\"\"}'')\nexcept ImportError as e:\n    print(f''❌ ImportError: {e}'')\n\")"
     ],
     "deny": [],
     "ask": []
