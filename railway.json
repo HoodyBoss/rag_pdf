@@ -18,7 +18,7 @@
     "RAILWAY_VOLUME_MOUNT": "/app/chroma_db",
     "OLLAMA_URL": "https://ollama-production-8d6d.up.railway.app",
     "USE_FALLBACK": "true",
-    "MONGODB_URI": "${{MongoDB.MONGO_URL:-mongodb://mongo:rNcxrYpEyxpZajJUidlsZjrVgFqpEDmc@sdfrag_pdf.railway.internal:27017}}",
+    "MONGODB_URI": "${{MongoDB.MONGO_URL:-mongodb://mongo:rNcxrYpEyxpZajJUidlsZjrVgFqpEDmc@caboose.proxy.rlwy.net:21428}}",
     "DATABASE_NAME": "${{MongoDB.MONGODB:-rag_pdf_railway}}",
     "JWT_SECRET": "OI-u97vDjcXUBpU7JuK6ArFlOV1wFOQQhH2223n4X4c",
     "ADMIN_PASSWORD": "admin123"
