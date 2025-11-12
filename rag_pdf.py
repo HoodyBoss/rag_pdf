@@ -116,11 +116,11 @@ AI_PROVIDERS = {
     },
     "zhipu": {
         "name": "Zhipu AI (GLM)",
-        "models": ["glm-4.6", "glm-4.5", "glm-4.1", "glm-4"],
+        "models": ["glm-4", "glm-4-flash", "glm-4-long", "glm-3-turbo"],
         "api_key_required": True,
         "api_key_env": "ZHIPU_API_KEY",
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
-        "default_model": "glm-4.6"
+        "base_url": "https://api.z.ai/api/paas/v4",
+        "default_model": "glm-4"
     },
     "chatgpt": {
         "name": "ChatGPT (OpenAI)",
@@ -6740,8 +6740,8 @@ with gr.Blocks(
                     value=os.getenv("ZHIPU_API_KEY", ""),
                     label="Zhipu AI API Key (GLM)",
                     type="password",
-                    placeholder="ใส่ API Key สำหรับ Zhipu AI",
-                    info="สำหรับใช้งานโมเดล GLM (glm-4.6, glm-4.5, glm-4.1, glm-4)"
+                    placeholder="ใส่ API Key สำหรับ Zhipu AI (z.ai)",
+                    info="สำหรับใช้งานโมเดล GLM (glm-4, glm-4-flash, glm-4-long, glm-3-turbo)"
                 )
                 zhipu_status = gr.HTML("")
 
@@ -6794,9 +6794,9 @@ with gr.Blocks(
                         return f"❌ {provider_name} API Key ไม่ถูกต้องหรือ library มีปัญหา: {str(api_error)}"
 
                 elif provider_name == "zhipu":
-                    client = openai.OpenAI(api_key=api_key, base_url="https://open.bigmodel.cn/api/paas/v4")
+                    client = openai.OpenAI(api_key=api_key, base_url="https://api.z.ai/api/paas/v4")
                     response = client.chat.completions.create(
-                        model="glm-4",
+                        model="glm-4-flash",
                         messages=[{"role": "user", "content": "Hello"}],
                         max_tokens=10
                     )
@@ -6881,6 +6881,36 @@ with gr.Blocks(
 
         test_zhipu_btn.click(
             fn=lambda k: test_api_connection("zhipu", k),
+            inputs=[zhipu_api_key],
+            outputs=[zhipu_status]
+        )
+
+        # Add button to check available models
+        with gr.Row():
+            check_zhipu_models_btn = gr.Button("ตรวจสอบโมเดล Zhipu", variant="secondary", size="sm")
+
+        def check_zhipu_models(api_key):
+            if not api_key or not api_key.strip():
+                return "❌ กรุณาใส่ API Key ก่อน"
+
+            try:
+                import requests
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                response = requests.get("https://api.z.ai/api/paas/v4/models", headers=headers, timeout=10)
+                if response.status_code == 200:
+                    models_data = response.json()
+                    models = [model.get('id', 'unknown') for model in models_data.get('data', [])]
+                    return f"✅ โมเดลที่มี: {', '.join(models[:10])}"
+                else:
+                    return f"❌ Error {response.status_code}: {response.text}"
+            except Exception as e:
+                return f"❌ ไม่สามารถตรวจสอบโมเดลได้: {str(e)}"
+
+        check_zhipu_models_btn.click(
+            fn=check_zhipu_models,
             inputs=[zhipu_api_key],
             outputs=[zhipu_status]
         )
