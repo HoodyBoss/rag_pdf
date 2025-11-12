@@ -26,6 +26,13 @@ class AuthManager:
             mongodb_uri = os.getenv("MONGODB_URI", os.getenv("MONGO_URL", "mongodb://localhost:27017"))
             database_name = os.getenv("DATABASE_NAME", "rag_pdf_auth")
 
+            # Print environment variables for debugging
+            print("🔍 DEBUG - Environment variables:")
+            print(f"   MONGODB_URI: {os.getenv('MONGODB_URI', 'NOT_SET')}")
+            print(f"   MONGO_URL: {os.getenv('MONGO_URL', 'NOT_SET')}")
+            print(f"   DATABASE_NAME: {os.getenv('DATABASE_NAME', 'NOT_SET')}")
+            print(f"   Final MongoDB URI: {mongodb_uri}")
+
             # Log all environment variables for debugging
             logging.info("🔍 Environment variables:")
             logging.info(f"   MONGODB_URI: {os.getenv('MONGODB_URI', 'NOT_SET')}")
@@ -33,10 +40,17 @@ class AuthManager:
 
             # Log the connection string (mask password)
             masked_uri = mongodb_uri.replace("rNcxrYpEyxpZajJUidlsZjrVgFqpEDmc", "***PASSWORD***")
+            print(f"📡 Attempting to connect to MongoDB with masked URI: {masked_uri}")
             logging.info(f"📡 Attempting to connect to MongoDB with URI: {masked_uri}")
             logging.info(f"📊 Database name: {database_name}")
 
+            # Validate connection string
+            if not mongodb_uri or "," in mongodb_uri.split("@")[-1]:
+                raise ValueError(f"Invalid MongoDB URI: {masked_uri}")
+
+            print("📞 Creating MongoDB client...")
             self.client = MongoClient(mongodb_uri)
+            print("✅ MongoDB client created successfully")
             self.db = self.client[database_name]
             self.users_collection = self.db["users"]
             self.sessions_collection = self.db["sessions"]

@@ -8,7 +8,7 @@ import logging
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from rag_pdf import RAGPDFApplication
-from login_page import create_login_interface, get_current_user_info, logout_current_user, require_auth
+from login_page import create_login_interface, get_current_user_info, logout_current_user, require_auth, check_session
 from auth_models import auth_manager
 
 # Configure logging
