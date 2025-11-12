@@ -572,7 +572,7 @@ try:
             from fix_database_persistence import scan_collection_directories, get_sqlite_collection_info, reconstruct_collection
         except ImportError:
             logging.warning("⚠️ fix_database_persistence module not found, skipping persistence check")
-            return False
+            count = 0  # Set to 0 to indicate no data available
 
         collection_dirs = scan_collection_directories()
         sqlite_collections = get_sqlite_collection_info()
