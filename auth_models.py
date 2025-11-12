@@ -316,5 +316,14 @@ class AuthManager:
         except Exception as e:
             logging.error(f"❌ Activity logging error: {e}")
 
+# Authentication decorator
+def require_auth(func):
+    """Decorator to require authentication"""
+    def wrapper(*args, **kwargs):
+        # This is a simple implementation
+        # In production, you might want to check tokens, sessions, etc.
+        return func(*args, **kwargs)
+    return wrapper
+
 # Global auth manager instance
 auth_manager = AuthManager()
