@@ -116,7 +116,7 @@ AI_PROVIDERS = {
     },
     "zhipu": {
         "name": "Zhipu AI (GLM)",
-        "models": ["glm-4", "glm-4-flash", "glm-4-long", "glm-3-turbo"],
+        "models": ["glm-4", "glm-4v", "glm-3-turbo"],
         "api_key_required": True,
         "api_key_env": "ZHIPU_API_KEY",
         "base_url": "https://api.z.ai/api/paas/v4",
@@ -6741,7 +6741,7 @@ with gr.Blocks(
                     label="Zhipu AI API Key (GLM)",
                     type="password",
                     placeholder="ใส่ API Key สำหรับ Zhipu AI (z.ai)",
-                    info="สำหรับใช้งานโมเดล GLM (glm-4, glm-4-flash, glm-4-long, glm-3-turbo)"
+                    info="สำหรับใช้งานโมเดล GLM (glm-4, glm-4v, glm-3-turbo) - กด 'ตรวจสอบโมเดล Zhipu' ก่อนใช้"
                 )
                 zhipu_status = gr.HTML("")
 
@@ -6796,7 +6796,7 @@ with gr.Blocks(
                 elif provider_name == "zhipu":
                     client = openai.OpenAI(api_key=api_key, base_url="https://api.z.ai/api/paas/v4")
                     response = client.chat.completions.create(
-                        model="glm-4-flash",
+                        model="glm-4",
                         messages=[{"role": "user", "content": "Hello"}],
                         max_tokens=10
                     )
@@ -6899,13 +6899,40 @@ with gr.Blocks(
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 }
+
+                # Try to get available models
                 response = requests.get("https://api.z.ai/api/paas/v4/models", headers=headers, timeout=10)
                 if response.status_code == 200:
                     models_data = response.json()
                     models = [model.get('id', 'unknown') for model in models_data.get('data', [])]
                     return f"✅ โมเดลที่มี: {', '.join(models[:10])}"
                 else:
-                    return f"❌ Error {response.status_code}: {response.text}"
+                    # If models endpoint doesn't work, try common model names
+                    common_models = ["glm-4", "glm-4v", "glm-3-turbo"]
+                    results = []
+
+                    for model in common_models:
+                        try:
+                            test_response = requests.post(
+                                "https://api.z.ai/api/paas/v4/chat/completions",
+                                headers=headers,
+                                json={
+                                    "model": model,
+                                    "messages": [{"role": "user", "content": "test"}],
+                                    "max_tokens": 1
+                                },
+                                timeout=5
+                            )
+                            if test_response.status_code == 200:
+                                results.append(model)
+                        except:
+                            continue
+
+                    if results:
+                        return f"✅ โมเดลที่ใช้ได้: {', '.join(results)}"
+                    else:
+                        return f"❌ ไม่พบโมเดลที่ใช้ได้ ตรวจสอบ API Key หรือ endpoint"
+
             except Exception as e:
                 return f"❌ ไม่สามารถตรวจสอบโมเดลได้: {str(e)}"
 
