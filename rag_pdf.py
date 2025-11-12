@@ -47,6 +47,19 @@ import hashlib
 from collections import deque
 from datetime import datetime
 
+# Additional AI Provider imports
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+
 # LightRAG imports for graph reasoning
 try:
     from lightrag_integration import initialize_lightrag_system, query_with_graph_reasoning, multi_hop_reasoning, get_lightrag_status
@@ -65,6 +78,219 @@ TEMP_VECTOR="./data/chromadb"
 TEMP_VECTOR_BACKUP="./data/chromadb_backup"
 # รายชื่อ Model ที่คุณมีบน Ollama
 AVAILABLE_MODELS = ["gemma3:latest", "qwen3:latest","llama3.2:latest"]
+
+# AI Provider Configuration
+AI_PROVIDERS = {
+    "ollama": {
+        "name": "Ollama (Local)",
+        "models": AVAILABLE_MODELS,
+        "api_key_required": False,
+        "default_model": "gemma3:latest"
+    },
+    "minimax": {
+        "name": "Minimax",
+        "models": ["abab6.5", "abab6.5s", "abab5.5"],
+        "api_key_required": True,
+        "api_key_env": "MINIMAX_API_KEY",
+        "base_url": "https://api.minimax.chat/v1",
+        "default_model": "abab6.5"
+    },
+    "manus": {
+        "name": "Manus",
+        "models": ["manus-code", "manus-reasoning", "manus-vision"],
+        "api_key_required": True,
+        "api_key_env": "MANUS_API_KEY",
+        "base_url": "https://api.manus.ai/v1",
+        "default_model": "manus-code"
+    },
+    "gemini": {
+        "name": "Google Gemini",
+        "models": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"],
+        "api_key_required": True,
+        "api_key_env": "GEMINI_API_KEY",
+        "base_url": "https://generativelanguage.googleapis.com/v1",
+        "default_model": "gemini-2.5-pro"
+    },
+    "chatgpt": {
+        "name": "ChatGPT (OpenAI)",
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+        "api_key_required": True,
+        "api_key_env": "OPENAI_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-4o"
+    }
+}
+
+# Default AI Provider
+DEFAULT_AI_PROVIDER = os.getenv("DEFAULT_AI_PROVIDER", "ollama")
+
+def get_ai_provider_config(provider_name: str) -> dict:
+    """Get AI provider configuration"""
+    return AI_PROVIDERS.get(provider_name, AI_PROVIDERS["ollama"])
+
+def get_available_providers() -> list:
+    """Get list of available AI providers"""
+    providers = []
+    for key, config in AI_PROVIDERS.items():
+        if key == "ollama":
+            providers.append(key)
+        elif config["api_key_required"]:
+            api_key = os.getenv(config["api_key_env"])
+            if api_key and api_key.strip():
+                providers.append(key)
+        else:
+            providers.append(key)
+    return providers
+
+def get_provider_models(provider_name: str) -> list:
+    """Get available models for a provider"""
+    config = get_ai_provider_config(provider_name)
+    return config.get("models", [])
+
+def call_ai_provider(provider_name: str, model: str, messages: list, stream: bool = True, **kwargs):
+    """
+    Unified function to call different AI providers
+
+    Args:
+        provider_name: Name of the AI provider (ollama, minimax, manus, gemini, chatgpt)
+        model: Model name to use
+        messages: List of messages in format [{"role": "user", "content": "..."}]
+        stream: Whether to stream the response
+        **kwargs: Additional parameters for the specific provider
+
+    Returns:
+        Response stream or response object
+    """
+    config = get_ai_provider_config(provider_name)
+
+    if provider_name == "ollama":
+        # Use existing Ollama implementation
+        try:
+            return ollama.chat(
+                model=model,
+                messages=messages,
+                stream=stream,
+                options={
+                    "temperature": kwargs.get("temperature", 0.3),
+                    "top_p": kwargs.get("top_p", 0.9),
+                    "max_tokens": kwargs.get("max_tokens", 2000),
+                    "num_predict": kwargs.get("num_predict", 1500)
+                }
+            )
+        except Exception as e:
+            logging.error(f"Ollama API error: {e}")
+            raise
+
+    elif provider_name == "chatgpt":
+        if not OPENAI_AVAILABLE:
+            raise ImportError("OpenAI library not available. Install with: pip install openai")
+
+        api_key = os.getenv(config["api_key_env"])
+        if not api_key:
+            raise ValueError(f"API key not found for {provider_name}. Set {config['api_key_env']} environment variable.")
+
+        try:
+            client = openai.OpenAI(api_key=api_key)
+
+            if stream:
+                return client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=True,
+                    temperature=kwargs.get("temperature", 0.3),
+                    max_tokens=kwargs.get("max_tokens", 2000),
+                    top_p=kwargs.get("top_p", 0.9)
+                )
+            else:
+                return client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=kwargs.get("temperature", 0.3),
+                    max_tokens=kwargs.get("max_tokens", 2000),
+                    top_p=kwargs.get("top_p", 0.9)
+                )
+        except Exception as e:
+            logging.error(f"OpenAI API error: {e}")
+            raise
+
+    elif provider_name == "gemini":
+        if not GEMINI_AVAILABLE:
+            raise ImportError("Google Generative AI library not available. Install with: pip install google-generativeai")
+
+        api_key = os.getenv(config["api_key_env"])
+        if not api_key:
+            raise ValueError(f"API key not found for {provider_name}. Set {config['api_key_env']} environment variable.")
+
+        try:
+            genai.configure(api_key=api_key)
+            model_obj = genai.GenerativeModel(model)
+
+            # Convert messages to Gemini format
+            prompt = ""
+            for msg in messages:
+                if msg["role"] == "user":
+                    prompt += f"User: {msg['content']}\n"
+                elif msg["role"] == "assistant":
+                    prompt += f"Assistant: {msg['content']}\n"
+
+            prompt += "Assistant: "
+
+            response = model_obj.generate_content(
+                prompt,
+                stream=stream,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=kwargs.get("temperature", 0.3),
+                    max_output_tokens=kwargs.get("max_tokens", 2000),
+                    top_p=kwargs.get("top_p", 0.9)
+                )
+            )
+
+            # Convert Gemini stream to match Ollama/OpenAI format
+            def gemini_stream_converter(gemini_response):
+                for chunk in gemini_response:
+                    if chunk.text:
+                        yield {"message": {"content": chunk.text}}
+
+            return gemini_stream_converter(response)
+        except Exception as e:
+            logging.error(f"Gemini API error: {e}")
+            raise
+
+    elif provider_name in ["minimax", "manus"]:
+        # Generic OpenAI-compatible API implementation
+        api_key = os.getenv(config["api_key_env"])
+        if not api_key:
+            raise ValueError(f"API key not found for {provider_name}. Set {config['api_key_env']} environment variable.")
+
+        try:
+            client = openai.OpenAI(
+                api_key=api_key,
+                base_url=config["base_url"]
+            )
+
+            if stream:
+                return client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=True,
+                    temperature=kwargs.get("temperature", 0.3),
+                    max_tokens=kwargs.get("max_tokens", 2000),
+                    top_p=kwargs.get("top_p", 0.9)
+                )
+            else:
+                return client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=kwargs.get("temperature", 0.3),
+                    max_tokens=kwargs.get("max_tokens", 2000),
+                    top_p=kwargs.get("top_p", 0.9)
+                )
+        except Exception as e:
+            logging.error(f"{provider_name} API error: {e}")
+            raise
+
+    else:
+        raise ValueError(f"Unsupported AI provider: {provider_name}")
 
 # Discord Configuration
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "YOUR_WEBHOOK_URL_HERE")  # ใส่ Webhook URL ที่นี่
@@ -2999,7 +3225,7 @@ def filter_relevant_contexts(question: str, documents: list, metadatas: list, mi
     return filtered_contexts[:max_contexts]
 
 
-def query_rag(question: str, chat_llm: str = "gemma3:latest", show_source: bool = False, formal_style: bool = False):
+def query_rag(question: str, chat_llm: str = "gemma3:latest", ai_provider: str = "ollama", show_source: bool = False, formal_style: bool = False):
     """
     ค้นหาในระบบ Enhanced RAG และสร้างคำตอบแบบ streaming โดยใช้ Ollama
     """
@@ -3116,53 +3342,55 @@ def query_rag(question: str, chat_llm: str = "gemma3:latest", show_source: bool 
     log_with_time("+++++++++++++ Send prompt To LLM ++++++++++++++++++")
     overall_start = time.time()
 
-    # Debug: Check Ollama server status before API call
-    health_start = time.time()
-    try:
-        import requests
-        logging.info("Checking Ollama health before API call...")
-        ollama_api_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-        logging.info(f"Ollama API URL: {ollama_api_url}")
-        health_check = requests.get(f"{ollama_api_url}/api/tags", timeout=5)
-        measure_time(health_start, "Ollama health check")
-        log_with_time(f"Ollama health check: Status {health_check.status_code}")
-        if health_check.status_code == 200:
-            models = health_check.json().get('models', [])
-            model_names = [m['name'] for m in models]
-            log_with_time(f"Available models: {model_names}")
-            log_with_time(f"Target model '{chat_llm}' available: {chat_llm in model_names}")
-        else:
-            log_with_time(f"Ollama server returned status: {health_check.status_code}")
-    except Exception as e:
-        log_with_time(f"Ollama health check failed: {e}")
-        # Return empty stream instead of None
-        error_msg = f"❌ Ollama server error: {str(e)}"
-        return ({"message": {"content": error_msg}} for _ in range(1))
+    # Debug: Check server status before API call (only for Ollama)
+    if ai_provider == "ollama":
+        health_start = time.time()
+        try:
+            import requests
+            logging.info("Checking Ollama health before API call...")
+            ollama_api_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+            logging.info(f"Ollama API URL: {ollama_api_url}")
+            health_check = requests.get(f"{ollama_api_url}/api/tags", timeout=5)
+            measure_time(health_start, "Ollama health check")
+            log_with_time(f"Ollama health check: Status {health_check.status_code}")
+            if health_check.status_code == 200:
+                models = health_check.json().get('models', [])
+                model_names = [m['name'] for m in models]
+                log_with_time(f"Available models: {model_names}")
+                log_with_time(f"Target model '{chat_llm}' available: {chat_llm in model_names}")
+            else:
+                log_with_time(f"Ollama server returned status: {health_check.status_code}")
+        except Exception as e:
+            log_with_time(f"Ollama health check failed: {e}")
+            # Return empty stream instead of None
+            error_msg = f"❌ Ollama server error: {str(e)}"
+            return ({"message": {"content": error_msg}} for _ in range(1))
+    else:
+        logging.info(f"Skipping health check for {ai_provider} provider")
 
     api_call_start = time.time()
-    log_with_time(f"Starting ollama.chat() with model: {chat_llm}")
+    log_with_time(f"Starting AI provider: {ai_provider} with model: {chat_llm}")
     log_with_time(f"Prompt preview: {prompt[:100]}...")
 
     ## Generation  เพื่อการตอบ chat
     try:
-        stream = ollama.chat(
+        stream = call_ai_provider(
+            provider_name=ai_provider,
             model=chat_llm,
             messages=[{"role": "user", "content": prompt}],
             stream=True,
-            options={
-                "temperature": 0.3,
-                "top_p": 0.9,
-                "max_tokens": 2000,
-                "num_predict": 1500
-            }
+            temperature=0.3,
+            top_p=0.9,
+            max_tokens=2000,
+            num_predict=1500
         )
-        measure_time(api_call_start, "ollama.chat() API call")
-        log_with_time("ollama.chat() call successful, returning stream")
+        measure_time(api_call_start, f"{ai_provider}.chat() API call")
+        log_with_time(f"{ai_provider} call successful, returning stream")
         measure_time(overall_start, "Total LLM response setup time")
         return stream
     except Exception as e:
-        measure_time(api_call_start, "ollama.chat() API call (failed)")
-        log_with_time(f"ollama.chat() failed: {e}")
+        measure_time(api_call_start, f"{ai_provider} API call (failed)")
+        log_with_time(f"{ai_provider} call failed: {e}")
         # Return empty stream instead of None
         error_msg = f"❌ LLM call failed: {str(e)}"
         return ({"message": {"content": error_msg}} for _ in range(1))
@@ -3170,6 +3398,7 @@ def query_rag(question: str, chat_llm: str = "gemma3:latest", show_source: bool 
 async def query_rag_with_lightrag(
     question: str,
     chat_llm: str = "gemma3:latest",
+    ai_provider: str = "ollama",
     show_source: bool = False,
     formal_style: bool = False,
     use_graph_reasoning: bool = False,
@@ -3251,6 +3480,7 @@ async def query_rag_with_lightrag(
 def query_rag_with_multi_hop(
     question: str,
     chat_llm: str = "gemma3:latest",
+    ai_provider: str = "ollama",
     show_source: bool = False,
     formal_style: bool = False,
     hop_count: int = 2
@@ -5099,13 +5329,14 @@ def export_feedback():
 # ==================== END FEEDBACK FUNCTIONS ====================
 
 
-def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = False, formal_style: bool = False,
+def chatbot_interface(history: List[Dict], llm_model: str, ai_provider: str = "ollama", show_source: bool = False, formal_style: bool = False,
                        send_to_discord: bool = False, send_to_line: bool = False, send_to_facebook: bool = False,
                        line_user_id: str = "", fb_user_id: str = "", use_graph_reasoning: bool = False,
                        reasoning_mode: str = "hybrid", multi_hop_enabled: bool = False, hop_count: int = 2):
     """
     อินเทอร์เฟซแชทบอทแบบ streaming with LightRAG support
     """
+    print(f"DEBUG: chatbot_interface received - Provider: {ai_provider}, Model: {llm_model}")  # Debug
     user_message = history[-1]["content"]
 
     # ส่งคืนคำถามปัจจุบันสำหรับ feedback
@@ -5119,6 +5350,7 @@ def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = F
             stream = query_rag_with_multi_hop(
                 user_message,
                 chat_llm=llm_model,
+                ai_provider=ai_provider,
                 show_source=show_source,
                 formal_style=formal_style,
                 hop_count=hop_count
@@ -5136,6 +5368,7 @@ def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = F
                     query_rag_with_lightrag(
                         user_message,
                         chat_llm=llm_model,
+                        ai_provider=ai_provider,
                         show_source=show_source,
                         formal_style=formal_style,
                         use_graph_reasoning=True,
@@ -5153,7 +5386,7 @@ def chatbot_interface(history: List[Dict], llm_model: str, show_source: bool = F
                 loop.close()
     else:
         # Use standard RAG
-        stream = query_rag(user_message, chat_llm=llm_model, show_source=show_source, formal_style=formal_style)
+        stream = query_rag(user_message, chat_llm=llm_model, ai_provider=ai_provider, show_source=show_source, formal_style=formal_style)
 
     history.append({"role": "assistant", "content": ""})
     full_answer=""
@@ -6434,14 +6667,236 @@ with gr.Blocks(
 
     # ==================== END TAG MANAGEMENT TAB ====================
 
-    with gr.Tab("แชท"):
-        # Choice เลือก Model
-        model_selector = gr.Dropdown(
-            choices=AVAILABLE_MODELS,
-            value="gemma3:latest",
-            label="เลือก LLM Model"
+    with gr.Tab("🔑 API Key Configuration"):
+        gr.Markdown("## ตั้งค่า API Key สำหรับ AI Providers")
+        gr.Markdown("ใส่ API Key สำหรับแต่ละผู้ให้บริการ AI ที่ต้องการใช้งาน")
+
+        with gr.Row():
+            with gr.Column():
+                # Minimax API Key
+                minimax_api_key = gr.Textbox(
+                    value=os.getenv("MINIMAX_API_KEY", ""),
+                    label="Minimax API Key",
+                    type="password",
+                    placeholder="ใส่ API Key สำหรับ Minimax",
+                    info="สำหรับใช้งานโมเดล Minimax (abab6.5, abab6.5s, abab5.5)"
+                )
+                minimax_status = gr.HTML("")
+
+            with gr.Column():
+                # Manus API Key
+                manus_api_key = gr.Textbox(
+                    value=os.getenv("MANUS_API_KEY", ""),
+                    label="Manus API Key",
+                    type="password",
+                    placeholder="ใส่ API Key สำหรับ Manus",
+                    info="สำหรับใช้งานโมเดล Manus (manus-code, manus-reasoning, manus-vision)"
+                )
+                manus_status = gr.HTML("")
+
+        with gr.Row():
+            with gr.Column():
+                # Gemini API Key
+                gemini_api_key = gr.Textbox(
+                    value=os.getenv("GEMINI_API_KEY", ""),
+                    label="Google Gemini API Key",
+                    type="password",
+                    placeholder="ใส่ API Key สำหรับ Google Gemini",
+                    info="สำหรับใช้งานโมเดล Gemini (gemini-2.0-flash-exp, gemini-1.5-pro, gemini-1.5-flash)"
+                )
+                gemini_status = gr.HTML("")
+
+            with gr.Column():
+                # OpenAI API Key
+                openai_api_key = gr.Textbox(
+                    value=os.getenv("OPENAI_API_KEY", ""),
+                    label="OpenAI API Key (ChatGPT)",
+                    type="password",
+                    placeholder="ใส่ API Key สำหรับ OpenAI",
+                    info="สำหรับใช้งานโมเดล ChatGPT (gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo)"
+                )
+                openai_status = gr.HTML("")
+
+        # Test connection buttons
+        with gr.Row():
+            test_minimax_btn = gr.Button("ทดสอบ Minimax", variant="secondary")
+            test_manus_btn = gr.Button("ทดสอบ Manus", variant="secondary")
+            test_gemini_btn = gr.Button("ทดสอบ Gemini", variant="secondary")
+            test_openai_btn = gr.Button("ทดสอบ OpenAI", variant="secondary")
+
+        # Save configuration button
+        save_config_btn = gr.Button("บันทึกการตั้งค่า", variant="primary")
+        config_status = gr.HTML("")
+
+        def test_api_connection(provider_name, api_key):
+            """Test API connection for a provider"""
+            if not api_key or not api_key.strip():
+                return f"❌ กรุณาใส่ API Key สำหรับ {provider_name}"
+
+            try:
+                if provider_name == "minimax":
+                    client = openai.OpenAI(api_key=api_key, base_url="https://api.minimax.chat/v1")
+                    response = client.chat.completions.create(
+                        model="abab6.5s",
+                        messages=[{"role": "user", "content": "Hello"}],
+                        max_tokens=10
+                    )
+                    return f"✅ {provider_name} API Key ถูกต้องและพร้อมใช้งาน"
+
+                elif provider_name == "manus":
+                    client = openai.OpenAI(api_key=api_key, base_url="https://api.manus.ai/v1")
+                    response = client.chat.completions.create(
+                        model="manus-code",
+                        messages=[{"role": "user", "content": "Hello"}],
+                        max_tokens=10
+                    )
+                    return f"✅ {provider_name} API Key ถูกต้องและพร้อมใช้งาน"
+
+                elif provider_name == "gemini":
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel('gemini-2.5-flash')
+                    response = model.generate_content("Hello")
+                    return f"✅ {provider_name} API Key ถูกต้องและพร้อมใช้งาน"
+
+                elif provider_name == "openai":
+                    client = openai.OpenAI(api_key=api_key)
+                    response = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": "Hello"}],
+                        max_tokens=10
+                    )
+                    return f"✅ {provider_name} API Key ถูกต้องและพร้อมใช้งาน"
+
+            except Exception as e:
+                return f"❌ {provider_name} API Key ไม่ถูกต้อง: {str(e)}"
+
+        def save_api_config(minimax_key, manus_key, gemini_key, openai_key):
+            """Save API keys to environment variables"""
+            env_file = ".env"
+            lines = []
+
+            # Read existing .env file
+            if os.path.exists(env_file):
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+
+            # Update or add API keys
+            updates = {
+                "MINIMAX_API_KEY": minimax_key,
+                "MANUS_API_KEY": manus_key,
+                "GEMINI_API_KEY": gemini_key,
+                "OPENAI_API_KEY": openai_key
+            }
+
+            # Remove existing API key lines
+            lines = [line for line in lines if not any(key in line for key in updates.keys())]
+
+            # Add new API key lines
+            for key, value in updates.items():
+                if value and value.strip():
+                    lines.append(f"{key}={value}\n")
+
+            # Write back to .env file
+            with open(env_file, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+
+            # Update environment variables
+            os.environ["MINIMAX_API_KEY"] = minimax_key
+            os.environ["MANUS_API_KEY"] = manus_key
+            os.environ["GEMINI_API_KEY"] = gemini_key
+            os.environ["OPENAI_API_KEY"] = openai_key
+
+            return "✅ บันทึกการตั้งค่า API Key เรียบร้อยแล้ว กรุณารีสตาร์ทแอปพลิเคชันเพื่อให้การตั้งค่ามีผล"
+
+        # Connect test buttons
+        test_minimax_btn.click(
+            fn=lambda k: test_api_connection("minimax", k),
+            inputs=[minimax_api_key],
+            outputs=[minimax_status]
         )
-        selected_model = gr.State(value="gemma3:latest")  # เก็บไว้ใน state
+
+        test_manus_btn.click(
+            fn=lambda k: test_api_connection("manus", k),
+            inputs=[manus_api_key],
+            outputs=[manus_status]
+        )
+
+        test_gemini_btn.click(
+            fn=lambda k: test_api_connection("gemini", k),
+            inputs=[gemini_api_key],
+            outputs=[gemini_status]
+        )
+
+        test_openai_btn.click(
+            fn=lambda k: test_api_connection("openai", k),
+            inputs=[openai_api_key],
+            outputs=[openai_status]
+        )
+
+        # Connect save button
+        save_config_btn.click(
+            fn=save_api_config,
+            inputs=[minimax_api_key, manus_api_key, gemini_api_key, openai_api_key],
+            outputs=[config_status]
+        )
+
+    with gr.Tab("แชท"):
+        # Simple provider initialization - start fast
+        basic_providers = ["ollama"]
+
+        # Check for external providers quickly (no blocking)
+        external_providers = []
+        if os.getenv("GEMINI_API_KEY"):
+            external_providers.append("gemini")
+        if os.getenv("OPENAI_API_KEY"):
+            external_providers.append("chatgpt")
+        if os.getenv("MINIMAX_API_KEY"):
+            external_providers.append("minimax")
+        if os.getenv("MANUS_API_KEY"):
+            external_providers.append("manus")
+
+        all_providers = basic_providers + external_providers
+        provider_choices = [(AI_PROVIDERS[p]["name"], p) for p in all_providers if p in AI_PROVIDERS]
+
+        logging.info(f"Quick available providers: {all_providers}")
+
+        # Start with Ollama - fastest loading
+        provider_selector = gr.Dropdown(
+            choices=provider_choices,
+            value="ollama",
+            label="เลือก AI Provider",
+            info="เลือกผู้ให้บริการ AI ที่ต้องการใช้"
+        )
+        selected_provider = gr.State(value="ollama")
+
+        # Combined update function
+        def update_provider_and_models(provider):
+            models = get_provider_models(provider)
+            default_model = AI_PROVIDERS[provider]["default_model"] if models else None
+            if models and default_model not in models:
+                default_model = models[0] if models else None
+            print(f"Provider: {provider}, Models: {models}, Default: {default_model}")  # Debug
+            return gr.update(choices=models, value=default_model), provider, default_model
+
+        # Start with Ollama models - no blocking operations
+        initial_models = get_provider_models("ollama")
+        initial_default_model = AI_PROVIDERS["ollama"]["default_model"] if initial_models else None
+
+        model_selector = gr.Dropdown(
+            choices=initial_models,
+            value=initial_default_model,
+            label="เลือก LLM Model",
+            allow_custom_value=True
+        )
+        selected_model = gr.State(value=initial_default_model)
+
+        # Update both provider state and models when provider changes
+        provider_selector.change(
+            fn=update_provider_and_models,
+            inputs=provider_selector,
+            outputs=[model_selector, selected_provider, selected_model]
+        )
+
         model_selector.change(fn=lambda x: x, inputs=model_selector, outputs=selected_model)
 
         # Choice เลือก RAG Mode
@@ -6755,7 +7210,7 @@ with gr.Blocks(
             queue=False
         ).then(
             fn=chatbot_interface,
-            inputs=[chatbot, selected_model, show_source_checkbox, formal_style_checkbox,
+            inputs=[chatbot, selected_model, selected_provider, show_source_checkbox, formal_style_checkbox,
                    send_to_discord_checkbox, send_to_line_checkbox, send_to_facebook_checkbox,
                    line_user_id_input, fb_user_id_input, use_graph_reasoning, reasoning_mode,
                    multi_hop_enabled, hop_count],
