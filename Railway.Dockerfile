@@ -23,8 +23,11 @@ COPY requirements_minimal.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements_minimal.txt
 
-# Copy the application
-COPY railway_app.py .
+# Copy the application files
+COPY rag_pdf.py .
+COPY auth_models.py .
+COPY login_page.py .
+COPY authenticated_app.py .
 
 # Create necessary directories
 RUN mkdir -p chroma_db temp_files
@@ -37,4 +40,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:7860 || exit 1
 
 # Command to run the application
-CMD ["python", "railway_app.py"]
+CMD ["python", "authenticated_app.py"]

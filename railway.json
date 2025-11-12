@@ -4,7 +4,7 @@
     "buildCommand": "pip install -r requirements_minimal.txt"
   },
   "deploy": {
-    "startCommand": "python rag_pdf.py",
+    "startCommand": "python authenticated_app.py",
     "restartPolicyType": "on_failure",
     "healthcheckPath": "/",
     "port": 7860
@@ -18,6 +18,10 @@
     "CHROMA_PERSISTENT": "true",
     "RAILWAY_VOLUME_MOUNT": "/app/chroma_db",
     "OLLAMA_URL": "https://ollama-production-8d6d.up.railway.app",
-    "USE_FALLBACK": "true"
+    "USE_FALLBACK": "true",
+    "MONGODB_URI": "${{MONGO_URL}}",
+    "DATABASE_NAME": "rag_pdf_railway",
+    "JWT_SECRET": "your-super-secret-jwt-key-change-this-in-production",
+    "ADMIN_PASSWORD": "admin123"
   }
 }
