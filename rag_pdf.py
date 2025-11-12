@@ -47,6 +47,24 @@ import hashlib
 from collections import deque
 from datetime import datetime
 
+# Authentication imports
+try:
+    from auth_models import auth_manager, get_current_user_info, require_auth, logout_current_user
+    AUTH_ENABLED = True
+    logging.info("✅ Authentication system loaded successfully")
+except ImportError as e:
+    AUTH_ENABLED = False
+    logging.warning(f"⚠️ Authentication system not available: {e}")
+    # Fallback functions if auth models not available
+    def auth_manager():
+        return None
+    def get_current_user_info():
+        return {"authenticated": False, "user": None, "token": None}
+    def require_auth(func):
+        return func
+    def logout_current_user():
+        return "Authentication not available"
+
 # Additional AI Provider imports
 try:
     import openai
