@@ -116,11 +116,11 @@ AI_PROVIDERS = {
     },
     "zhipu": {
         "name": "Zhipu AI (GLM)",
-        "models": ["glm-4", "glm-4v", "glm-3-turbo"],
+        "models": ["GLM-4.6", "glm-4.6", "glm-4", "glm-4v", "glm-3-turbo"],
         "api_key_required": True,
         "api_key_env": "ZHIPU_API_KEY",
         "base_url": "https://api.z.ai/api/paas/v4",
-        "default_model": "glm-4"
+        "default_model": "GLM-4.6"
     },
     "chatgpt": {
         "name": "ChatGPT (OpenAI)",
@@ -6741,7 +6741,7 @@ with gr.Blocks(
                     label="Zhipu AI API Key (GLM)",
                     type="password",
                     placeholder="ใส่ API Key สำหรับ Zhipu AI (z.ai)",
-                    info="สำหรับใช้งานโมเดล GLM (glm-4, glm-4v, glm-3-turbo) - กด 'ตรวจสอบโมเดล Zhipu' ก่อนใช้"
+                    info="สำหรับใช้งานโมเดล GLM-4.6 (GLM-4.6, glm-4, glm-4v, glm-3-turbo) - กด 'ตรวจสอบโมเดล Zhipu' ก่อนใช้"
                 )
                 zhipu_status = gr.HTML("")
 
@@ -6796,7 +6796,7 @@ with gr.Blocks(
                 elif provider_name == "zhipu":
                     client = openai.OpenAI(api_key=api_key, base_url="https://api.z.ai/api/paas/v4")
                     response = client.chat.completions.create(
-                        model="glm-4",
+                        model="GLM-4.6",
                         messages=[{"role": "user", "content": "Hello"}],
                         max_tokens=10
                     )
@@ -6908,7 +6908,7 @@ with gr.Blocks(
                     return f"✅ โมเดลที่มี: {', '.join(models[:10])}"
                 else:
                     # If models endpoint doesn't work, try common model names
-                    common_models = ["glm-4", "glm-4v", "glm-3-turbo"]
+                    common_models = ["GLM-4.6", "glm-4.6", "glm-4", "glm-4v", "glm-3-turbo"]
                     results = []
 
                     for model in common_models:
