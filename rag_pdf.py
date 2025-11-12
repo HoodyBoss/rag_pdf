@@ -111,6 +111,14 @@ AI_PROVIDERS = {
         "base_url": "https://generativelanguage.googleapis.com/v1",
         "default_model": "gemini-2.5-pro"
     },
+    "zhipu": {
+        "name": "Zhipu AI (GLM)",
+        "models": ["glm-4.6", "glm-4.5", "glm-4.1", "glm-4"],
+        "api_key_required": True,
+        "api_key_env": "ZHIPU_API_KEY",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "default_model": "glm-4.6"
+    },
     "chatgpt": {
         "name": "ChatGPT (OpenAI)",
         "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
@@ -256,7 +264,7 @@ def call_ai_provider(provider_name: str, model: str, messages: list, stream: boo
             logging.error(f"Gemini API error: {e}")
             raise
 
-    elif provider_name in ["minimax", "manus"]:
+    elif provider_name in ["minimax", "manus", "zhipu"]:
         # Generic OpenAI-compatible API implementation
         api_key = os.getenv(config["api_key_env"])
         if not api_key:
@@ -6717,12 +6725,25 @@ with gr.Blocks(
                 )
                 openai_status = gr.HTML("")
 
+        with gr.Row():
+            with gr.Column():
+                # Zhipu AI API Key
+                zhipu_api_key = gr.Textbox(
+                    value=os.getenv("ZHIPU_API_KEY", ""),
+                    label="Zhipu AI API Key (GLM)",
+                    type="password",
+                    placeholder="ใส่ API Key สำหรับ Zhipu AI",
+                    info="สำหรับใช้งานโมเดล GLM (glm-4.6, glm-4.5, glm-4.1, glm-4)"
+                )
+                zhipu_status = gr.HTML("")
+
         # Test connection buttons
         with gr.Row():
             test_minimax_btn = gr.Button("ทดสอบ Minimax", variant="secondary")
             test_manus_btn = gr.Button("ทดสอบ Manus", variant="secondary")
             test_gemini_btn = gr.Button("ทดสอบ Gemini", variant="secondary")
             test_openai_btn = gr.Button("ทดสอบ OpenAI", variant="secondary")
+            test_zhipu_btn = gr.Button("ทดสอบ Zhipu AI", variant="secondary")
 
         # Save configuration button
         save_config_btn = gr.Button("บันทึกการตั้งค่า", variant="primary")
@@ -6758,6 +6779,15 @@ with gr.Blocks(
                     response = model.generate_content("Hello")
                     return f"✅ {provider_name} API Key ถูกต้องและพร้อมใช้งาน"
 
+                elif provider_name == "zhipu":
+                    client = openai.OpenAI(api_key=api_key, base_url="https://open.bigmodel.cn/api/paas/v4")
+                    response = client.chat.completions.create(
+                        model="glm-4",
+                        messages=[{"role": "user", "content": "Hello"}],
+                        max_tokens=10
+                    )
+                    return f"✅ {provider_name} API Key ถูกต้องและพร้อมใช้งาน"
+
                 elif provider_name == "openai":
                     client = openai.OpenAI(api_key=api_key)
                     response = client.chat.completions.create(
@@ -6770,7 +6800,7 @@ with gr.Blocks(
             except Exception as e:
                 return f"❌ {provider_name} API Key ไม่ถูกต้อง: {str(e)}"
 
-        def save_api_config(minimax_key, manus_key, gemini_key, openai_key):
+        def save_api_config(minimax_key, manus_key, gemini_key, openai_key, zhipu_key):
             """Save API keys to environment variables"""
             env_file = ".env"
             lines = []
@@ -6785,7 +6815,8 @@ with gr.Blocks(
                 "MINIMAX_API_KEY": minimax_key,
                 "MANUS_API_KEY": manus_key,
                 "GEMINI_API_KEY": gemini_key,
-                "OPENAI_API_KEY": openai_key
+                "OPENAI_API_KEY": openai_key,
+                "ZHIPU_API_KEY": zhipu_key
             }
 
             # Remove existing API key lines
@@ -6805,6 +6836,7 @@ with gr.Blocks(
             os.environ["MANUS_API_KEY"] = manus_key
             os.environ["GEMINI_API_KEY"] = gemini_key
             os.environ["OPENAI_API_KEY"] = openai_key
+            os.environ["ZHIPU_API_KEY"] = zhipu_key
 
             return "✅ บันทึกการตั้งค่า API Key เรียบร้อยแล้ว กรุณารีสตาร์ทแอปพลิเคชันเพื่อให้การตั้งค่ามีผล"
 
@@ -6833,10 +6865,16 @@ with gr.Blocks(
             outputs=[openai_status]
         )
 
+        test_zhipu_btn.click(
+            fn=lambda k: test_api_connection("zhipu", k),
+            inputs=[zhipu_api_key],
+            outputs=[zhipu_status]
+        )
+
         # Connect save button
         save_config_btn.click(
             fn=save_api_config,
-            inputs=[minimax_api_key, manus_api_key, gemini_api_key, openai_api_key],
+            inputs=[minimax_api_key, manus_api_key, gemini_api_key, openai_api_key, zhipu_api_key],
             outputs=[config_status]
         )
 
@@ -6854,6 +6892,8 @@ with gr.Blocks(
             external_providers.append("minimax")
         if os.getenv("MANUS_API_KEY"):
             external_providers.append("manus")
+        if os.getenv("ZHIPU_API_KEY"):
+            external_providers.append("zhipu")
 
         all_providers = basic_providers + external_providers
         provider_choices = [(AI_PROVIDERS[p]["name"], p) for p in all_providers if p in AI_PROVIDERS]
