@@ -5600,6 +5600,93 @@ def test_graph_reasoning_interface():
     except Exception as e:
         return f"❌ ทดสอบล้มเหลว: {str(e)}", gr.update(visible=True)
 
+# Check authentication and create appropriate interface
+def create_authenticated_interface():
+    """Create interface with authentication check"""
+
+    # Check if user is authenticated
+    auth_info = get_current_user_info()
+
+    if AUTH_ENABLED and not auth_info.get("authenticated", False):
+        # Show login interface
+        with gr.Blocks(title="RAG PDF - Login", theme=gr.themes.Soft()) as login_interface:
+            with gr.Column(scale=1):
+                gr.HTML("""
+                    <div style="text-align: center; padding: 2rem; background: #f8f9fa; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <h1>RAG PDF</h1>
+                        <h3>เข้าสู่ระบบ</h3>
+                        <p>กรุณาเข้าสู่ระบบเพื่อใช้งานระบบ</p>
+                        <p><small>Demo: admin / admin123</small></p>
+                    </div>
+                """)
+
+                username_input = gr.Text(
+                    label="ชื่อผู้ใช้",
+                    placeholder="กรอกชื่อผู้ใช้",
+                    max_lines=1
+                )
+
+                password_input = gr.Text(
+                    label="รหัสผ่าน",
+                    type="password",
+                    placeholder="กรอกรหัสผ่าน",
+                    max_lines=1
+                )
+
+                login_btn = gr.Button("เข้าสู่ระบบ", variant="primary", size="lg")
+                login_status = gr.HTML("")
+
+                def handle_login(username, password):
+                    try:
+                        if username == "admin" and password == "admin123":
+                            # Set simple session
+                            from login_page import CURRENT_USER, AUTH_TOKEN
+                            CURRENT_USER = {
+                                "username": "admin",
+                                "full_name": "Administrator",
+                                "role": "admin"
+                            }
+                            AUTH_TOKEN = "demo_token"
+
+                            return (
+                                gr.update(visible=False),  # Hide login interface
+                                "เข้าสู่ระบบสำเร็จ! กำลังโหลดระบบหลัก..."
+                            )
+                        else:
+                            return (
+                                gr.update(visible=True),   # Show login interface
+                                "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง<br><small>ทดลอง: admin / admin123</small>"
+                            )
+                    except Exception as e:
+                        return (
+                            gr.update(visible=True),
+                            f"เกิดข้อผิดพลาด: {str(e)}"
+                        )
+
+                def refresh_after_login():
+                    """Refresh page after successful login"""
+                    return gr.HTML("<script>location.reload();</script>")
+
+                # Auto refresh after login
+                login_btn.click(
+                    fn=handle_login,
+                    inputs=[username_input, password_input],
+                    outputs=[login_interface, login_status]
+                ).then(
+                    fn=refresh_after_login,
+                    outputs=[login_status]
+                )
+
+            return login_interface
+
+    else:
+        # Show main interface
+        return create_main_interface()
+
+def create_main_interface():
+    """Create main RAG PDF interface"""
+    return demo
+
 # Gradio interface
 
 with gr.Blocks(
@@ -7562,7 +7649,9 @@ if __name__ == "__main__":
     except Exception as e:
         logging.warning(f"Failed to update LightRAG status on load: {e}")
 
-    demo.launch()
+    # Create and launch appropriate interface
+    app_interface = create_authenticated_interface()
+    app_interface.launch()
 # Wrapper class for authenticated application
 class RAGPDFApplication:
     """Wrapper class for RAG PDF application"""

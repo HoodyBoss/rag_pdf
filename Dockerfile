@@ -47,5 +47,5 @@ ENV GRADIO_SERVER_NAME=0.0.0.0
 # ENV ADMIN_USERNAME=${ADMIN_USERNAME}
 # ENV ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
-# Start command - use the working app with fixed login flow
-CMD ["python", "working_app_railway.py"]
+# Start command - use the original rag_pdf.py with integrated login
+CMD ["python", "rag_pdf.py"]

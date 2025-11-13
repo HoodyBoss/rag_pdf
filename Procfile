@@ -1,1 +1,1 @@
-web: python working_app_railway.py
+web: python rag_pdf.py
