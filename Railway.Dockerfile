@@ -28,6 +28,9 @@ COPY rag_pdf.py .
 COPY auth_models.py .
 COPY login_page.py .
 COPY authenticated_app.py .
+COPY working_app.py .
+COPY working_app_railway.py .
+COPY run_working.py .
 
 # Create necessary directories
 RUN mkdir -p chroma_db temp_files
@@ -40,4 +43,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:7860 || exit 1
 
 # Command to run the application
-CMD ["python", "authenticated_app.py"]
+CMD ["python", "working_app_railway.py"]
