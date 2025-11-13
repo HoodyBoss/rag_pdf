@@ -10,8 +10,19 @@ from auth_models import auth_manager
 CURRENT_USER = None
 AUTH_TOKEN = None
 
+# Session persistence using Gradio's built-in storage
+SESSION_STATE = {}
+
 def create_login_interface():
-    """Create Gradio login interface"""
+    """Create Gradio login interface with session state"""
+
+    def init_session_state():
+        """Initialize session state"""
+        return {
+            "user": None,
+            "token": None,
+            "authenticated": False
+        }
 
     def login_user(username, password):
         """Handle user login"""
@@ -139,13 +150,23 @@ def create_login_interface():
             CURRENT_USER = result["user"]
             AUTH_TOKEN = result["token"]
 
+            # Auto-refresh script to load main app
+            auto_refresh_script = """
+            <script>
+                setTimeout(function() {
+                    window.location.reload();
+                }, 2000);
+            </script>
+            """
+
             success_html = f"""
                 <div style="text-align: center; padding: 2rem; background: #d4edda; border-radius: 8px;">
-                    <h2>✅ เข้าสู่ระบบสำเร็จ!</h2>
+                    <h2>เข้าสู่ระบบสำเร็จ!</h2>
                     <p>ยินดีต้อนรับ {result['user'].get('profile', {}).get('full_name', result['user']['username'])}</p>
                     <p>กำลังนำท่านไปยังแอปพลิเคชันหลัก...</p>
-                    <p><small>หน้าจอจะรีเฟรชอัตโนมัติภายใน 3 วินาที</small></p>
+                    <p><small>หน้าจอจะรีเฟรชอัตโนมัติภายใน 2 วินาที</small></p>
                 </div>
+                {auto_refresh_script}
             """
 
             return (
