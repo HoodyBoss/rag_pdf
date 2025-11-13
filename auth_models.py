@@ -27,30 +27,30 @@ class AuthManager:
             database_name = os.getenv("DATABASE_NAME", "rag_pdf_auth")
 
             # Print environment variables for debugging
-            print("🔍 DEBUG - Environment variables:")
+            print("DEBUG - Environment variables:")
             print(f"   MONGODB_URI: {os.getenv('MONGODB_URI', 'NOT_SET')}")
             print(f"   MONGO_URL: {os.getenv('MONGO_URL', 'NOT_SET')}")
             print(f"   DATABASE_NAME: {os.getenv('DATABASE_NAME', 'NOT_SET')}")
             print(f"   Final MongoDB URI: {mongodb_uri}")
 
             # Log all environment variables for debugging
-            logging.info("🔍 Environment variables:")
+            logging.info("Environment variables:")
             logging.info(f"   MONGODB_URI: {os.getenv('MONGODB_URI', 'NOT_SET')}")
             logging.info(f"   MONGO_URL: {os.getenv('MONGO_URL', 'NOT_SET')}")
 
             # Log the connection string (mask password)
             masked_uri = mongodb_uri.replace("rNcxrYpEyxpZajJUidlsZjrVgFqpEDmc", "***PASSWORD***")
-            print(f"📡 Attempting to connect to MongoDB with masked URI: {masked_uri}")
-            logging.info(f"📡 Attempting to connect to MongoDB with URI: {masked_uri}")
-            logging.info(f"📊 Database name: {database_name}")
+            print(f"Attempting to connect to MongoDB with masked URI: {masked_uri}")
+            logging.info(f"Attempting to connect to MongoDB with URI: {masked_uri}")
+            logging.info(f"Database name: {database_name}")
 
             # Validate connection string
             if not mongodb_uri or "," in mongodb_uri.split("@")[-1]:
                 raise ValueError(f"Invalid MongoDB URI: {masked_uri}")
 
-            print("📞 Creating MongoDB client...")
+            print("Creating MongoDB client...")
             self.client = MongoClient(mongodb_uri)
-            print("✅ MongoDB client created successfully")
+            print("MongoDB client created successfully")
             self.db = self.client[database_name]
             self.users_collection = self.db["users"]
             self.sessions_collection = self.db["sessions"]
@@ -61,11 +61,11 @@ class AuthManager:
             self.sessions_collection.create_index("token")
             self.sessions_collection.create_index("user_id")
 
-            logging.info("✅ Connected to MongoDB for authentication")
+            logging.info("Connected to MongoDB for authentication")
             return True
 
         except Exception as e:
-            logging.error(f"❌ MongoDB connection error: {e}")
+            logging.error(f"MongoDB connection error: {e}")
             return False
 
     def create_default_admin(self) -> bool:
@@ -73,7 +73,7 @@ class AuthManager:
         try:
             existing_admin = self.users_collection.find_one({"role": "admin"})
             if existing_admin:
-                logging.info("ℹ️ Admin account already exists")
+                logging.info("Admin account already exists")
                 return True
 
             # Default admin credentials
@@ -97,15 +97,15 @@ class AuthManager:
             }
 
             self.users_collection.insert_one(admin_user)
-            logging.info("✅ Default admin account created")
+            logging.info("Default admin account created")
             logging.info(f"   Username: admin")
             logging.info(f"   Password: {admin_password}")
-            logging.warning("⚠️  Please change the default admin password!")
+            logging.warning("Please change the default admin password!")
 
             return True
 
         except Exception as e:
-            logging.error(f"❌ Error creating admin account: {e}")
+            logging.error(f"Error creating admin account: {e}")
             return False
 
     def hash_password(self, password: str) -> str:
@@ -147,7 +147,7 @@ class AuthManager:
             }
 
         except Exception as e:
-            logging.error(f"❌ Error generating tokens: {e}")
+            logging.error(f" Error generating tokens: {e}")
             return {}
 
     def create_session(self, user_id: str, tokens: Dict[str, Any], ip_address: str) -> Optional[str]:
@@ -167,7 +167,7 @@ class AuthManager:
             return str(result.inserted_id)
 
         except Exception as e:
-            logging.error(f"❌ Error creating session: {e}")
+            logging.error(f" Error creating session: {e}")
             return None
 
     def validate_token(self, token: str) -> Optional[Dict[str, Any]]:
@@ -196,7 +196,7 @@ class AuthManager:
         except jwt.InvalidTokenError:
             return None
         except Exception as e:
-            logging.error(f"❌ Token validation error: {e}")
+            logging.error(f" Token validation error: {e}")
             return None
 
     def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
@@ -228,7 +228,7 @@ class AuthManager:
             }
 
         except Exception as e:
-            logging.error(f"❌ Authentication error: {e}")
+            logging.error(f" Authentication error: {e}")
             return None
 
     def logout_user(self, token: str) -> bool:
@@ -241,7 +241,7 @@ class AuthManager:
             return result.modified_count > 0
 
         except Exception as e:
-            logging.error(f"❌ Logout error: {e}")
+            logging.error(f" Logout error: {e}")
             return False
 
     def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -254,7 +254,7 @@ class AuthManager:
             return user
 
         except Exception as e:
-            logging.error(f"❌ Error getting user: {e}")
+            logging.error(f" Error getting user: {e}")
             return None
 
     def update_user_usage(self, user_id: str, action: str, metadata: Dict = None) -> bool:
@@ -279,7 +279,7 @@ class AuthManager:
             return True
 
         except Exception as e:
-            logging.error(f"❌ Error updating usage: {e}")
+            logging.error(f" Error updating usage: {e}")
             return False
 
     def check_rate_limit(self, user_id: str, action: str, limit_per_hour: int = 100) -> bool:
@@ -318,7 +318,49 @@ class AuthManager:
             return True
 
         except Exception as e:
-            logging.error(f"❌ Rate limit check error: {e}")
+            logging.error(f" Rate limit check error: {e}")
+            return True  # Allow on error (fail open)
+
+    def check_rate_limit_by_identifier(self, identifier: str, action: str, limit_per_hour: int = 100) -> bool:
+        """Check rate limit based on identifier (username, IP, etc.) for pre-authentication checks"""
+        try:
+            # For pre-authentication rate limiting, we'll implement a simple in-memory approach
+            # In production, you'd want to use Redis or another fast cache for this
+
+            # For now, implement a simple time-based check using a separate collection
+            rate_limit_collection = self.db["rate_limits"]
+
+            from datetime import datetime, timedelta
+            hour_ago = datetime.utcnow() - timedelta(hours=1)
+
+            # Clean old entries
+            rate_limit_collection.delete_many({
+                "identifier": identifier,
+                "action": action,
+                "timestamp": {"$lt": hour_ago}
+            })
+
+            # Count recent attempts
+            recent_count = rate_limit_collection.count_documents({
+                "identifier": identifier,
+                "action": action,
+                "timestamp": {"$gte": hour_ago}
+            })
+
+            if recent_count >= limit_per_hour:
+                return False
+
+            # Log this attempt
+            rate_limit_collection.insert_one({
+                "identifier": identifier,
+                "action": action,
+                "timestamp": datetime.utcnow()
+            })
+
+            return True
+
+        except Exception as e:
+            logging.error(f" Rate limit by identifier error: {e}")
             return True  # Allow on error (fail open)
 
     def log_activity(self, user_id: str, action: str, details: Dict = None):
@@ -338,7 +380,7 @@ class AuthManager:
             activity_logs_collection.insert_one(activity_log)
 
         except Exception as e:
-            logging.error(f"❌ Activity logging error: {e}")
+            logging.error(f" Activity logging error: {e}")
 
 # Authentication decorator
 def require_auth(func):

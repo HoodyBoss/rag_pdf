@@ -23,8 +23,9 @@ def create_login_interface():
                 auth_manager.connect()
 
             # Check rate limit based on username (before authentication)
-            temp_user_id = f"temp_{username}"
-            if not auth_manager.check_rate_limit(temp_user_id, "login_attempt", limit_per_hour=20):
+            # Use IP-based or session-based rate limiting instead of temp user ID
+            # For now, we'll implement a simple in-memory rate limit check
+            if not auth_manager.check_rate_limit_by_identifier(username, "login_attempt", limit_per_hour=20):
                 return "❌ คุณได้พยายามเข้าสู่ระบบมากเกินไป กรุณารอสักครู่"
 
             # Authenticate user
@@ -176,13 +177,13 @@ def create_login_interface():
             """)
 
             # Login Form
-            username_input = gr.Textbox(
+            username_input = gr.Text(
                 label="ชื่อผู้ใช้",
                 placeholder="กรอกชื่อผู้ใช้",
                 max_lines=1
             )
 
-            password_input = gr.Textbox(
+            password_input = gr.Text(
                 label="รหัสผ่าน",
                 type="password",
                 placeholder="กรอกรหัสผ่าน",
@@ -196,8 +197,8 @@ def create_login_interface():
             login_status = gr.HTML("")
 
             # Hidden inputs for token storage
-            user_data_json = gr.Textbox(visible=False)
-            token_input = gr.Textbox(visible=False)
+            user_data_json = gr.Text(visible=False)
+            token_input = gr.Text(visible=False)
 
         # Connect login button
         login_btn.click(
