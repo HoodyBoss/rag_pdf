@@ -1,5 +1,5 @@
 [build]
-builder = "railpack"
+builder = "dockerfile"
 
 [deploy]
 startCommand = "python working_app_railway.py"

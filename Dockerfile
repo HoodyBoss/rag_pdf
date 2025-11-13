@@ -20,6 +20,9 @@ COPY mongodb_rag.py .
 COPY auth_models.py .
 COPY login_page.py .
 COPY authenticated_app.py .
+COPY working_app.py .
+COPY working_app_railway.py .
+COPY run_working.py .
 COPY fix_database_persistence.py .
 COPY version.txt .
 COPY .env.example .env
@@ -44,5 +47,5 @@ ENV GRADIO_SERVER_NAME=0.0.0.0
 # ENV ADMIN_USERNAME=${ADMIN_USERNAME}
 # ENV ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
-# Start command - use the enhanced system with authentication
-CMD ["python", "authenticated_app.py"]
+# Start command - use the working app with fixed login flow
+CMD ["python", "working_app_railway.py"]
