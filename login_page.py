@@ -134,16 +134,35 @@ def create_login_interface():
     def handle_login(username, password):
         result = login_user(username, password)
         if isinstance(result, dict) and result.get("success"):
+            # Store user data and token globally
+            global CURRENT_USER, AUTH_TOKEN
+            CURRENT_USER = result["user"]
+            AUTH_TOKEN = result["token"]
+
+            success_html = f"""
+                <div style="text-align: center; padding: 2rem; background: #d4edda; border-radius: 8px;">
+                    <h2>✅ เข้าสู่ระบบสำเร็จ!</h2>
+                    <p>ยินดีต้อนรับ {result['user'].get('profile', {}).get('full_name', result['user']['username'])}</p>
+                    <p>กำลังนำท่านไปยังแอปพลิเคชันหลัก...</p>
+                    <p><small>หน้าจอจะรีเฟรชอัตโนมัติภายใน 3 วินาที</small></p>
+                </div>
+            """
+
             return (
                 result["message"],
-                gr.update(visible=True),
-                gr.update(visible=True),
+                gr.update(visible=False),  # Hide login form
                 gr.update(value=json.dumps(result["user"])),
                 gr.update(value=result["token"]),
-                gr.update(visible=False)  # Hide form after successful login
+                gr.update(visible=True, value=success_html)  # Show success message
             )
         else:
-            return (result, gr.update(visible=True), gr.update(visible=True), gr.update(""), gr.update(""), gr.update(visible=True))
+            return (
+                result,
+                gr.update(visible=True),   # Show login form
+                gr.update(value=""),
+                gr.update(value=""),
+                gr.update(visible=False)   # Hide success message
+            )
 
     # Create and return the login interface
     with gr.Blocks(title="RAG PDF - Login", css="""
@@ -166,7 +185,7 @@ def create_login_interface():
         }
     """) as login_app:
 
-        with gr.Column(elem_classes=["login-container"]):
+        with gr.Column(elem_classes=["login-container"]) as login_form:
             # Header
             gr.HTML("""
                 <div class="login-header">
@@ -200,11 +219,14 @@ def create_login_interface():
             user_data_json = gr.Text(visible=False)
             token_input = gr.Text(visible=False)
 
+            # Success message (will be shown after login)
+            success_message = gr.HTML(visible=False)
+
         # Connect login button
         login_btn.click(
             fn=handle_login,
             inputs=[username_input, password_input],
-            outputs=[login_status, login_btn, username_input, password_input, user_data_json, token_input]
+            outputs=[login_status, login_form, user_data_json, token_input, success_message]
         )
 
     return login_app

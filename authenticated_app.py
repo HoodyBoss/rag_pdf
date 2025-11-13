@@ -37,14 +37,14 @@ class AuthenticatedRAGApp:
                 auth_info = get_current_user_info()
 
                 if auth_info["authenticated"]:
-                    logger.info(f"✅ User {auth_info['user']['username']} already authenticated")
+                    logger.info(f"User {auth_info['user']['username']} already authenticated")
                     return self.create_main_rag_interface(auth_info['user'])
                 else:
-                    logger.info("ℹ️ No active session, showing login interface")
+                    logger.info("No active session, showing login interface")
                     return create_login_interface()
 
             except Exception as e:
-                logger.error(f"❌ Error checking authentication: {e}")
+                logger.error(f"Error checking authentication: {e}")
                 # Fallback to simple interface without auth
                 return self.create_simple_interface()
 
@@ -86,7 +86,7 @@ class AuthenticatedRAGApp:
                     # User info and logout
                     gr.HTML(f"""
                         <div class="user-info">
-                            <strong>👤 {user.get('profile', {}).get('full_name', user['username'])}</strong>
+                            <strong>User: {user.get('profile', {}).get('full_name', user['username'])}</strong>
                             <span>({user['role']})</span>
                             <button class="logout-btn" onclick="window.location.reload()">ออกจากระบบ</button>
                         </div>
@@ -109,7 +109,7 @@ class AuthenticatedRAGApp:
                 return authenticated_app
 
             except Exception as e:
-                logger.error(f"❌ Error creating main interface: {e}")
+                logger.error(f" Error creating main interface: {e}")
                 return self.create_simple_interface()
 
         def create_simple_interface(self):
@@ -141,7 +141,7 @@ class AuthenticatedRAGApp:
     def launch(self, server_name="0.0.0.0", server_port=7860, **kwargs):
         """Launch the authenticated application"""
 
-        logger.info("🚀 Starting Authenticated RAG PDF Application...")
+        logger.info(" Starting Authenticated RAG PDF Application...")
 
         # Initialize authentication
         try:
@@ -150,7 +150,7 @@ class AuthenticatedRAGApp:
                 self.auth_manager.create_default_admin()
                 logger.info("✅ Authentication system initialized")
         except Exception as e:
-            logger.error(f"❌ Failed to initialize authentication: {e}")
+            logger.error(f" Failed to initialize authentication: {e}")
             raise
 
         # Create and launch the interface
@@ -165,7 +165,7 @@ class AuthenticatedRAGApp:
 
 def main():
     """Main entry point"""
-    print("🚀 STARTING AUTHENTICATED RAG APP")
+    print(" STARTING AUTHENTICATED RAG APP")
     try:
         # Create authenticated application
         print("📦 Creating AuthenticatedRAGApp...")
@@ -181,7 +181,7 @@ def main():
         )
 
     except Exception as e:
-        logger.error(f"❌ Failed to start application: {e}")
+        logger.error(f" Failed to start application: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
