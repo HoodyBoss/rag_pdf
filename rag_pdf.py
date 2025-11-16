@@ -7763,6 +7763,91 @@ if __name__ == "__main__":
 
     # Create and launch appropriate interface
     app_interface = create_authenticated_interface()
+
+    # Add Flask webhook routes to Gradio's FastAPI app
+    try:
+        from fastapi import Request as FastAPIRequest
+        from fastapi.responses import PlainTextResponse
+
+        # Setup LINE bot if enabled
+        if LINE_ENABLED:
+            setup_line_bot()
+            register_line_handlers()
+            logging.info("✅ LINE Bot initialized and handlers registered")
+
+        # Setup Facebook bot if enabled
+        if FB_ENABLED:
+            setup_facebook_bot()
+            logging.info("✅ Facebook Bot initialized")
+
+        # Add LINE webhook endpoint to Gradio's FastAPI app
+        @app_interface.fastapi_app.post("/callback")
+        async def line_webhook(request: FastAPIRequest):
+            """LINE Webhook endpoint integrated with Gradio"""
+            if not LINE_ENABLED or not line_handler:
+                return PlainTextResponse("LINE not enabled", status_code=400)
+
+            signature = request.headers.get('X-Line-Signature', '')
+            body = await request.body()
+            body_text = body.decode('utf-8')
+
+            try:
+                line_handler.handle(body_text, signature)
+                return PlainTextResponse("OK")
+            except Exception as e:
+                logging.error(f"LINE webhook error: {str(e)}")
+                return PlainTextResponse("Error", status_code=400)
+
+        # Add Facebook webhook endpoint to Gradio's FastAPI app
+        @app_interface.fastapi_app.get("/webhook")
+        async def facebook_webhook_verify(request: FastAPIRequest):
+            """Facebook Webhook verification"""
+            if not FB_ENABLED:
+                return PlainTextResponse("Facebook not enabled", status_code=403)
+
+            mode = request.query_params.get("hub.mode")
+            token = request.query_params.get("hub.verify_token")
+            challenge = request.query_params.get("hub.challenge")
+
+            if mode == "subscribe" and token == FB_VERIFY_TOKEN:
+                logging.info("Facebook webhook verified")
+                return PlainTextResponse(challenge)
+            else:
+                return PlainTextResponse("Forbidden", status_code=403)
+
+        @app_interface.fastapi_app.post("/webhook")
+        async def facebook_webhook(request: FastAPIRequest):
+            """Facebook Webhook endpoint"""
+            if not FB_ENABLED:
+                return PlainTextResponse("Facebook not enabled", status_code=403)
+
+            body = await request.json()
+
+            if body.get("object") == "page":
+                for entry in body.get("entry", []):
+                    for messaging_event in entry.get("messaging", []):
+                        if messaging_event.get("message"):
+                            sender_id = messaging_event["sender"]["id"]
+                            message_text = messaging_event["message"].get("text", "")
+
+                            if message_text:
+                                import threading
+                                threading.Thread(
+                                    target=process_facebook_question,
+                                    args=(sender_id, message_text)
+                                ).start()
+
+                return PlainTextResponse("OK")
+
+            return PlainTextResponse("OK")
+
+        logging.info("✅ Webhook endpoints added to Gradio FastAPI app")
+        logging.info("📍 LINE webhook: /callback")
+        logging.info("📍 Facebook webhook: /webhook")
+
+    except Exception as e:
+        logging.error(f"❌ Failed to setup webhook endpoints: {str(e)}")
+
     app_interface.launch()
 # Wrapper class for authenticated application
 class RAGPDFApplication:
