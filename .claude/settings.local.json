@@ -47,7 +47,8 @@
       "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\" -c \"\ntry:\n    import google.generativeai as genai\n    print(''✅ google-generativeai imported successfully'')\n    print(f''Version: {genai.__version__ if hasattr(genai, \"\"__version__\"\") else \"\"unknown\"\"}'')\nexcept ImportError as e:\n    print(f''❌ ImportError: {e}'')\n\")",
       "WebFetch(domain:z.ai)",
       "WebFetch(domain:docs.z.ai)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git rm:*)"
     ],
     "deny": [],
     "ask": []
