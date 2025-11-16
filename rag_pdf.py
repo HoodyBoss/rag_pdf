@@ -6998,11 +6998,17 @@ with gr.Blocks(
                     info="เลือก provider เพื่อจัดการ models"
                 )
 
-                # Current models display
+                # Current models display - initialize with Gemini models
+                initial_provider = "gemini"
+                initial_provider_models = AI_PROVIDERS[initial_provider]["models"]
+                initial_default = AI_PROVIDERS[initial_provider]["default_model"]
+                initial_models_text = "\n".join([f"• {m}" + (" ⭐" if m == initial_default else "") for m in initial_provider_models])
+
                 current_models_display = gr.Textbox(
                     label="Models ปัจจุบัน",
                     lines=8,
                     interactive=False,
+                    value=initial_models_text,
                     placeholder="รายการ models..."
                 )
 
@@ -7010,6 +7016,7 @@ with gr.Blocks(
                 current_default_display = gr.Textbox(
                     label="Model เริ่มต้น",
                     interactive=False,
+                    value=initial_default,
                     placeholder="model เริ่มต้น..."
                 )
 
@@ -7025,7 +7032,7 @@ with gr.Blocks(
 
                 gr.Markdown("### ลบ Model")
                 remove_model_selector = gr.Dropdown(
-                    choices=[],
+                    choices=initial_provider_models,
                     label="เลือก Model ที่ต้องการลบ",
                     info="เลือก model ที่ต้องการลบออก"
                 )
@@ -7034,7 +7041,7 @@ with gr.Blocks(
 
                 gr.Markdown("### ตั้ง Model เริ่มต้น")
                 set_default_selector = gr.Dropdown(
-                    choices=[],
+                    choices=initial_provider_models,
                     label="เลือก Model เริ่มต้น",
                     info="เลือก model ที่จะเป็นค่าเริ่มต้น"
                 )
