@@ -6164,10 +6164,11 @@ with gr.Blocks(
         bot_status_output = gr.Textbox(label="สถานะ Discord Bot", lines=3)
 
         with gr.Row():
-            bot_model_selector = gr.Dropdown(
-                choices=AVAILABLE_MODELS,
-                value=DISCORD_DEFAULT_MODEL,
-                label="โมเดลสำหรับ Discord Bot"
+            bot_model_display = gr.Textbox(
+                label="โมเดลที่ใช้งาน (ซิงค์จากหน้าแชท)",
+                value=f"รอการเลือกจากหน้าแชท... (Fallback: {DISCORD_DEFAULT_MODEL})",
+                interactive=False,
+                lines=1
             )
 
             bot_reply_mode = gr.Dropdown(
@@ -6179,11 +6180,6 @@ with gr.Blocks(
                 value=DISCORD_REPLY_MODE,
                 label="วิธีการตอบกลับ"
             )
-
-        def update_discord_model(model):
-            global DISCORD_DEFAULT_MODEL
-            DISCORD_DEFAULT_MODEL = model
-            return f"อัปเดตโมเดล Discord Bot เป็น {model}"
 
         def update_discord_reply_mode(mode):
             global DISCORD_REPLY_MODE
@@ -6217,13 +6213,6 @@ with gr.Blocks(
             queue=False
         )
 
-        bot_model_selector.change(
-            fn=update_discord_model,
-            inputs=bot_model_selector,
-            outputs=bot_status_output,
-            queue=False
-        )
-
         bot_reply_mode.change(
             fn=update_discord_reply_mode,
             inputs=bot_reply_mode,
@@ -6240,16 +6229,12 @@ with gr.Blocks(
             stop_line_button = gr.Button("หยุด LINE OA Bot", variant="stop")
 
         line_status_output = gr.Textbox(label="สถานะ LINE OA Bot", lines=3)
-        line_model_selector = gr.Dropdown(
-            choices=AVAILABLE_MODELS,
-            value=LINE_DEFAULT_MODEL,
-            label="โมเดลสำหรับ LINE OA Bot"
+        line_model_display = gr.Textbox(
+            label="โมเดลที่ใช้งาน (ซิงค์จากหน้าแชท)",
+            value=f"รอการเลือกจากหน้าแชท... (Fallback: {LINE_DEFAULT_MODEL})",
+            interactive=False,
+            lines=1
         )
-
-        def update_line_model(model):
-            global LINE_DEFAULT_MODEL
-            LINE_DEFAULT_MODEL = model
-            return f"อัปเดตโมเดล LINE OA Bot เป็น {model}"
 
         def start_line_ui():
             if start_line_bot_thread():
@@ -6277,13 +6262,6 @@ with gr.Blocks(
             queue=False
         )
 
-        line_model_selector.change(
-            fn=update_line_model,
-            inputs=line_model_selector,
-            outputs=line_status_output,
-            queue=False
-        )
-
         # ส่วนจัดการ Facebook Messenger Bot
         with gr.Row():
             gr.Markdown("### 💬 จัดการ Facebook Messenger Bot")
@@ -6293,16 +6271,12 @@ with gr.Blocks(
             stop_fb_button = gr.Button("หยุด Facebook Bot", variant="stop")
 
         fb_status_output = gr.Textbox(label="สถานะ Facebook Bot", lines=3)
-        fb_model_selector = gr.Dropdown(
-            choices=AVAILABLE_MODELS,
-            value=FB_DEFAULT_MODEL,
-            label="โมเดลสำหรับ Facebook Bot"
+        fb_model_display = gr.Textbox(
+            label="โมเดลที่ใช้งาน (ซิงค์จากหน้าแชท)",
+            value=f"รอการเลือกจากหน้าแชท... (Fallback: {FB_DEFAULT_MODEL})",
+            interactive=False,
+            lines=1
         )
-
-        def update_fb_model(model):
-            global FB_DEFAULT_MODEL
-            FB_DEFAULT_MODEL = model
-            return f"อัปเดตโมเดล Facebook Bot เป็น {model}"
 
         def start_fb_ui():
             if start_facebook_bot_thread():
@@ -6326,13 +6300,6 @@ with gr.Blocks(
         stop_fb_button.click(
             fn=stop_fb_ui,
             inputs=None,
-            outputs=fb_status_output,
-            queue=False
-        )
-
-        fb_model_selector.change(
-            fn=update_fb_model,
-            inputs=fb_model_selector,
             outputs=fb_status_output,
             queue=False
         )
@@ -7077,6 +7044,28 @@ with gr.Blocks(
         )
 
         model_selector.change(fn=lambda x: x, inputs=model_selector, outputs=selected_model)
+
+        # Function to update bot model displays
+        def update_bot_model_displays(provider, model):
+            """Update all bot model display textboxes with current model/provider"""
+            if model and provider:
+                display_text = f"✅ ใช้จากหน้าแชท: {model} ({provider.upper()})"
+            else:
+                display_text = "รอการเลือกจากหน้าแชท..."
+            return display_text, display_text, display_text
+
+        # Update bot displays when model or provider changes
+        provider_selector.change(
+            fn=update_bot_model_displays,
+            inputs=[provider_selector, model_selector],
+            outputs=[bot_model_display, line_model_display, fb_model_display]
+        )
+
+        model_selector.change(
+            fn=update_bot_model_displays,
+            inputs=[provider_selector, model_selector],
+            outputs=[bot_model_display, line_model_display, fb_model_display]
+        )
 
         # Choice เลือก RAG Mode
         rag_mode_selector = gr.Radio(
