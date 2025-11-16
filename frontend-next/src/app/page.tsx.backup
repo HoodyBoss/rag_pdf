@@ -1,0 +1,2377 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { UserIcon, DocumentTextIcon, ChatBubbleLeftRightIcon, ArrowRightStartOnRectangleIcon, CloudArrowUpIcon, TrashIcon, ClipboardDocumentIcon, StarIcon, ChartBarIcon, CogIcon, CpuChipIcon, ShareIcon } from '@heroicons/react/24/outline'
+import axios from 'axios'
+
+interface User {
+  id: string
+  username: string
+  full_name?: string
+}
+
+interface Document {
+  id: string
+  filename: string
+  size: number
+  upload_date: string
+}
+
+interface ChatMessage {
+  id: string
+  type: 'user' | 'ai'
+  content: string
+  timestamp: string
+  sources?: Array<Record<string, any>>
+  model?: string
+  ai_provider?: string
+}
+
+interface AIProvider {
+  name: string
+  models: string[]
+  default_model: string
+  api_key_required: boolean
+}
+
+interface AIProviders {
+  [key: string]: AIProvider
+}
+
+const API_BASE_URL = 'http://localhost:8000'
+
+export default function HomePage() {
+  const [user, setUser] = useState<User | null>(null)
+  const [documents, setDocuments] = useState<Document[]>([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [question, setQuestion] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [loginError, setLoginError] = useState('')
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
+
+  // AI Provider states
+  const [aiProviders, setAiProviders] = useState<AIProviders>({})
+  const [selectedProvider, setSelectedProvider] = useState<string>('ollama')
+  const [selectedModel, setSelectedModel] = useState<string>('gemma3:latest')
+  const [showSources, setShowSources] = useState<boolean>(true)
+  const [temperature, setTemperature] = useState<number>(0.3)
+  const [isProcessingFiles, setIsProcessingFiles] = useState(false)
+
+  // Google Sheets states
+  const [sheetsUrl, setSheetsUrl] = useState('')
+  const [isProcessingSheets, setIsProcessingSheets] = useState(false)
+  const [sheetsPreview, setSheetsPreview] = useState<any>(null)
+  const [showSheetsPreview, setShowSheetsPreview] = useState(false)
+
+  // Feedback states
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false)
+  const [feedbackRating, setFeedbackRating] = useState(0)
+  const [feedbackType, setFeedbackType] = useState('good')
+  const [feedbackText, setFeedbackText] = useState('')
+  const [selectedChatForFeedback, setSelectedChatForFeedback] = useState<any>(null)
+  const [feedbackStats, setFeedbackStats] = useState<any>(null)
+  const [showFeedbackStats, setShowFeedbackStats] = useState(false)
+
+  // API Key Config states
+  const [showConfigModal, setShowConfigModal] = useState(false)
+  const [apiProviders, setApiProviders] = useState<any[]>([])
+  const [selectedConfigProvider, setSelectedConfigProvider] = useState('')
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [configStatus, setConfigStatus] = useState<any>(null)
+
+  // Memory Management States
+  const [showMemoryModal, setShowMemoryModal] = useState(false)
+  const [memoryStats, setMemoryStats] = useState(null)
+  const [memorySearchQuery, setMemorySearchQuery] = useState('')
+  const [memorySearchResults, setMemorySearchResults] = useState([])
+  const [newMemoryContent, setNewMemoryContent] = useState('')
+  const [newMemoryType, setNewMemoryType] = useState('working')
+
+  // Social Media Bots States
+  const [showSocialBotsModal, setShowSocialBotsModal] = useState(false)
+  const [botConfigs, setBotConfigs] = useState({})
+  const [newBotPlatform, setNewBotPlatform] = useState('discord')
+  const [newBotToken, setNewBotToken] = useState('')
+  const [newBotWebhook, setNewBotWebhook] = useState('')
+  const [newBotChannels, setNewBotChannels] = useState('')
+  const [botMessage, setBotMessage] = useState('')
+  const [selectedBotPlatform, setSelectedBotPlatform] = useState('discord')
+  const [selectedBotChannel, setSelectedBotChannel] = useState('')
+
+  useEffect(() => {
+    checkAuth()
+    fetchAIProviders()
+    fetchConfigStatus()
+  }, [])
+
+  const checkAuth = async () => {
+    try {
+      const token = localStorage.getItem('auth-token')
+      if (token) {
+        // TODO: Validate token with backend
+        setUser({ id: '1', username: 'admin', full_name: 'Admin User' })
+        fetchDocuments()
+      }
+    } catch (error) {
+      console.error('Auth check failed:', error)
+    }
+  }
+
+  const fetchAIProviders = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/ai/providers`)
+      setAiProviders(response.data.providers)
+
+      // Set default provider and model
+      const availableProviders = response.data.available
+      if (availableProviders.length > 0) {
+        const firstProvider = availableProviders[0]
+        setSelectedProvider(firstProvider)
+        setSelectedModel(response.data.providers[firstProvider].default_model)
+      }
+    } catch (error) {
+      console.error('Failed to fetch AI providers:', error)
+    }
+  }
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsLoggingIn(true)
+    setLoginError('')
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, loginForm)
+      if (response.data.success) {
+        localStorage.setItem('auth-token', response.data.token)
+        setUser(response.data.user)
+        fetchDocuments()
+      } else {
+        setLoginError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง')
+      }
+    } catch (error) {
+      setLoginError('เกิดข้อผิดพลาดในการเชื่อมต่อ')
+    } finally {
+      setIsLoggingIn(false)
+    }
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth-token')
+    setUser(null)
+    setDocuments([])
+    setChatMessages([])
+  }
+
+  const fetchDocuments = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/documents`)
+      setDocuments(response.data.documents || [])
+    } catch (error) {
+      console.error('Failed to fetch documents:', error)
+    }
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    setIsUploading(true)
+    setIsProcessingFiles(true)
+    const formData = new FormData()
+
+    // Append all files to FormData
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i])
+    }
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/documents/upload-and-process`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+
+      if (response.data.success) {
+        fetchDocuments()
+        e.target.value = ''
+        alert(`✅ ${response.data.message}`)
+      } else {
+        alert('❌ อัปโหลดล้มเหลว: ' + (response.data.process_result?.message || 'Unknown error'))
+      }
+    } catch (error: any) {
+      console.error('Upload error:', error)
+      const errorMessage = error.response?.data?.detail || 'Network error'
+      alert('❌ อัปโหลดล้มเหลว: ' + errorMessage)
+    } finally {
+      setIsUploading(false)
+      setIsProcessingFiles(false)
+    }
+  }
+
+  const handleDeleteDocument = async (documentId: string) => {
+    if (!confirm('คุณต้องการลบเอกสารนี้ใช่หรือไม่?')) return
+
+    try {
+      await axios.delete(`${API_BASE_URL}/api/documents/${documentId}`)
+      fetchDocuments()
+    } catch (error) {
+      alert('ลบเอกสารล้มเหลว')
+    }
+  }
+
+  const handleBatchImport = async () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.multiple = true
+    input.accept = '.pdf,.txt,.docx,.xlsx,.xls,.jpg,.jpeg,.png,.gif,.bmp'
+
+    input.onchange = async (e) => {
+      const files = (e.target as HTMLInputElement).files
+      if (!files || files.length === 0) return
+
+      if (!confirm(`คุณต้องการนำเข้าเอกสาร ${files.length} ไฟล์นี้ใช่หรือไม่?`)) return
+
+      setIsUploading(true)
+      setIsProcessingFiles(true)
+
+      try {
+        const formData = new FormData()
+        Array.from(files).forEach(file => {
+          formData.append('files', file)
+        })
+        formData.append('clear_before_upload', 'false')
+        formData.append('user_id', '1')
+
+        const response = await axios.post(`${API_BASE_URL}/api/documents/upload-and-process`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        })
+
+        if (response.data.success) {
+          const message = `
+✅ นำเข้าเอกสารสำเร็จ!
+- จำนวนไฟล์: ${files.length} ไฟล์
+- ผลการประมวลผล: ${response.data.message}
+          `.trim()
+          alert(message)
+          fetchDocuments()
+        } else {
+          alert('นำเข้าเอกสารล้มเหลว')
+        }
+      } catch (error: any) {
+        console.error('Batch import error:', error)
+        alert(`นำเข้าเอกสารล้มเหลว: ${error.response?.data?.detail || error.message}`)
+      } finally {
+        setIsUploading(false)
+        setIsProcessingFiles(false)
+      }
+    }
+
+    input.click()
+  }
+
+  const handlePreviewSheets = async () => {
+    if (!sheetsUrl.trim()) return
+
+    setIsProcessingSheets(true)
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/google-sheets/preview`, {
+        sheets_url: sheetsUrl,
+        clear_before_upload: false,
+        user_id: '1'
+      })
+
+      setSheetsPreview(response.data)
+      setShowSheetsPreview(true)
+    } catch (error: any) {
+      alert(`ดูตัวอย่าง Google Sheets ล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    } finally {
+      setIsProcessingSheets(false)
+    }
+  }
+
+  const handleProcessSheets = async () => {
+    if (!sheetsUrl.trim()) return
+
+    if (!confirm('คุณต้องการประมวลผล Google Sheets นี้ใช่หรือไม่?')) return
+
+    setIsProcessingSheets(true)
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/google-sheets/process`, {
+        sheets_url: sheetsUrl,
+        clear_before_upload: false,
+        user_id: '1'
+      })
+
+      alert(response.data.message)
+      setSheetsUrl('')
+      setShowSheetsPreview(false)
+      setSheetsPreview(null)
+      fetchDocuments()
+    } catch (error: any) {
+      alert(`ประมวลผล Google Sheets ล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    } finally {
+      setIsProcessingSheets(false)
+    }
+  }
+
+  // Feedback Functions
+  const openFeedbackModal = (chatMessage: any) => {
+    setSelectedChatForFeedback(chatMessage)
+    setShowFeedbackModal(true)
+    setFeedbackRating(0)
+    setFeedbackType('good')
+    setFeedbackText('')
+  }
+
+  const submitFeedback = async () => {
+    if (!selectedChatForFeedback || feedbackRating === 0) {
+      alert('กรุณาให้คะแนนดาว')
+      return
+    }
+
+    try {
+      const feedbackData = {
+        chat_id: selectedChatForFeedback.id,
+        question: selectedChatForFeedback.content,
+        answer: selectedChatForFeedback.answer,
+        rating: feedbackRating,
+        feedback_type: feedbackType,
+        feedback_text: feedbackText,
+        ai_provider: selectedChatForFeedback.ai_provider,
+        model: selectedChatForFeedback.model,
+        user_id: '1'
+      }
+
+      const response = await axios.post(`${API_BASE_URL}/api/feedback`, feedbackData)
+
+      if (response.data.success) {
+        alert('✅ บันทึกความคิดเห็นสำเร็จ')
+        setShowFeedbackModal(false)
+        fetchFeedbackStats()
+      }
+    } catch (error: any) {
+      alert(`บันทึกความคิดเห็นล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  const fetchFeedbackStats = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/feedback/stats`)
+      setFeedbackStats(response.data)
+    } catch (error) {
+      console.error('Error fetching feedback stats:', error)
+    }
+  }
+
+  // API Key Configuration Functions
+  const fetchConfigStatus = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/config/status`)
+      setConfigStatus(response.data)
+    } catch (error) {
+      console.error('Error fetching config status:', error)
+    }
+  }
+
+  const fetchApiProviders = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/config/providers`)
+      setApiProviders(response.data.providers)
+    } catch (error) {
+      console.error('Error fetching API providers:', error)
+    }
+  }
+
+  const saveApiKey = async () => {
+    if (!selectedConfigProvider || !apiKeyInput.trim()) {
+      alert('กรุณาเลือก provider และใส่ API key')
+      return
+    }
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/config/api-key`, {
+        provider: selectedConfigProvider,
+        api_key: apiKeyInput.trim()
+      })
+
+      if (response.data.success) {
+        alert(response.data.message)
+        setApiKeyInput('')
+        fetchConfigStatus()
+        fetchApiProviders()
+      }
+    } catch (error: any) {
+      alert(`บันทึก API key ล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  const testApiKey = async (provider: string) => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/config/test/${provider}`)
+
+      if (response.data.success) {
+        alert(response.data.message)
+      } else {
+        alert(response.data.message)
+      }
+    } catch (error: any) {
+      alert(`ทดสอบ API key ล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  const deleteApiKey = async (provider: string) => {
+    if (!confirm(`คุณต้องการลบ API key สำหรับ ${provider} ใช่หรือไม่?`)) return
+
+    try {
+      const response = await axios.delete(`${API_BASE_URL}/api/config/api-key/${provider}`)
+
+      if (response.data.success) {
+        alert(response.data.message)
+        fetchConfigStatus()
+        fetchApiProviders()
+      }
+    } catch (error: any) {
+      alert(`ลบ API key ล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  // Memory Management Functions
+  const fetchMemoryStats = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/memory/stats`)
+      setMemoryStats(response.data)
+    } catch (error) {
+      console.error('Error fetching memory stats:', error)
+    }
+  }
+
+  const addMemory = async () => {
+    if (!newMemoryContent.trim()) {
+      alert('กรุณาใส่เนื้อหา memory')
+      return
+    }
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/memory/add`, {
+        memory_type: newMemoryType,
+        content: newMemoryContent.trim()
+      })
+
+      if (response.data.success) {
+        alert(response.data.message)
+        setNewMemoryContent('')
+        fetchMemoryStats()
+      }
+    } catch (error: any) {
+      alert(`เพิ่ม memory ล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  const searchMemories = async () => {
+    if (!memorySearchQuery.trim()) {
+      setMemorySearchResults([])
+      return
+    }
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/memory/search`, {
+        query: memorySearchQuery.trim()
+      })
+
+      setMemorySearchResults(response.data.results || [])
+    } catch (error: any) {
+      console.error('Error searching memories:', error)
+      setMemorySearchResults([])
+    }
+  }
+
+  const consolidateMemories = async () => {
+    if (!confirm('คุณต้องการรวม working memories เข้า long-term memory ใช่หรือไม่?')) return
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/memory/consolidate`)
+
+      if (response.data.success) {
+        alert(response.data.message)
+        fetchMemoryStats()
+      }
+    } catch (error: any) {
+      alert(`รวม memories ล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  // Social Media Bots Functions
+  const fetchBotConfigs = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/social-bots/configs`)
+      setBotConfigs(response.data.configs || {})
+    } catch (error) {
+      console.error('Error fetching bot configs:', error)
+    }
+  }
+
+  const addBotConfig = async () => {
+    if (!newBotToken.trim()) {
+      alert('กรุณาใส่ Bot Token')
+      return
+    }
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/social-bots/add-config`, {
+        platform: newBotPlatform,
+        bot_token: newBotToken.trim(),
+        webhook_url: newBotWebhook.trim() || undefined,
+        channels: newBotChannels ? newBotChannels.split(',').map(c => c.trim()) : []
+      })
+
+      if (response.data.success) {
+        alert(response.data.message)
+        setNewBotToken('')
+        setNewBotWebhook('')
+        setNewBotChannels('')
+        fetchBotConfigs()
+      }
+    } catch (error: any) {
+      alert(`เพิ่ม bot config ล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  const sendBotMessage = async () => {
+    if (!botMessage.trim() || !selectedBotChannel.trim()) {
+      alert('กรุณาใส่ข้อความและ channel')
+      return
+    }
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/social-bots/send-message`, {
+        platform: selectedBotPlatform,
+        channel: selectedBotChannel.trim(),
+        message: botMessage.trim()
+      })
+
+      if (response.data.success) {
+        alert(response.data.message)
+        setBotMessage('')
+      }
+    } catch (error: any) {
+      alert(`ส่งข้อความล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  const testBotConnection = async (platform: string) => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/social-bots/test/${platform}`)
+
+      if (response.data.success) {
+        alert(response.data.message)
+      } else {
+        alert(response.data.message)
+      }
+    } catch (error: any) {
+      alert(`ทดสอบการเชื่อมต่อล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  const deleteBotConfig = async (platform: string) => {
+    if (!confirm(`คุณต้องการลบ configuration สำหรับ ${platform} ใช่หรือไม่?`)) return
+
+    try {
+      const response = await axios.delete(`${API_BASE_URL}/api/social-bots/config/${platform}`)
+
+      if (response.data.success) {
+        alert(response.data.message)
+        fetchBotConfigs()
+      }
+    } catch (error: any) {
+      alert(`ลบ bot config ล้มเหลว: ${error.response?.data?.detail || error.message}`)
+    }
+  }
+
+  const handleSendMessage = async () => {
+    if (!question.trim()) return
+
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      type: 'user',
+      content: question,
+      timestamp: new Date().toISOString()
+    }
+
+    setChatMessages(prev => [...prev, userMessage])
+    setQuestion('')
+    setIsLoading(true)
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/chat`, {
+        question: userMessage.content,
+        ai_provider: selectedProvider,
+        model: selectedModel,
+        temperature: temperature,
+        show_source: showSources,
+        stream: false
+      })
+
+      const aiMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: response.data.answer,
+        timestamp: new Date().toISOString(),
+        sources: response.data.sources || [],
+        model: response.data.model,
+        ai_provider: response.data.ai_provider
+      }
+
+      setChatMessages(prev => [...prev, aiMessage])
+    } catch (error: any) {
+      console.error('Chat error:', error)
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: `ไม่สามารถเชื่อมต่อกับเซิร์เวอร์ได้: ${error.response?.data?.detail || 'Network error'}`,
+        timestamp: new Date().toISOString()
+      }
+      setChatMessages(prev => [...prev, errorMessage])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="max-w-md w-full space-y-8">
+          <div>
+            <div className="mx-auto h-12 w-12 flex items-center justify-center rounded-full bg-blue-100">
+              <DocumentTextIcon className="h-8 w-8 text-blue-600" />
+            </div>
+            <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+              เข้าสู่ระบบ RAG PDF
+            </h2>
+            <p className="mt-2 text-center text-sm text-gray-600">
+              กรุณาเข้าสู่ระบบเพื่อใช้งาน
+            </p>
+          </div>
+
+          <form className="mt-8 space-y-6" onSubmit={handleLogin}>
+            <div className="rounded-md shadow-sm space-y-4">
+              <div>
+                <label htmlFor="username" className="block text-sm font-medium text-gray-700">
+                  ชื่อผู้ใช้
+                </label>
+                <input
+                  id="username"
+                  name="username"
+                  type="text"
+                  required
+                  className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="กรอกชื่อผู้ใช้"
+                  value={loginForm.username}
+                  onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                />
+              </div>
+              <div>
+                <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                  รหัสผ่าน
+                </label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  required
+                  className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="กรอกรหัสผ่าน"
+                  value={loginForm.password}
+                  onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {loginError && (
+              <div className="text-red-500 text-sm text-center">
+                {loginError}
+              </div>
+            )}
+
+            <div>
+              <button
+                type="submit"
+                disabled={isLoggingIn}
+                className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+              >
+                {isLoggingIn ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ'}
+              </button>
+            </div>
+
+            <div className="text-center text-sm text-gray-500">
+              <p>Demo: admin / admin123</p>
+            </div>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Navigation */}
+      <nav className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex items-center">
+              <DocumentTextIcon className="h-8 w-8 text-blue-600" />
+              <h1 className="ml-3 text-xl font-bold text-gray-900">RAG PDF</h1>
+            </div>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => {
+                  setShowMemoryModal(true)
+                  fetchMemoryStats()
+                }}
+                className="flex items-center px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+                title="จัดการ Memory (LightRAG)"
+              >
+                <CpuChipIcon className="h-4 w-4 mr-1" />
+                Memory
+              </button>
+              <button
+                onClick={() => {
+                  setShowSocialBotsModal(true)
+                  fetchBotConfigs()
+                }}
+                className="flex items-center px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+                title="จัดการ Social Media Bots"
+              >
+                <ShareIcon className="h-4 w-4 mr-1" />
+                Bots
+              </button>
+              <button
+                onClick={() => setShowFeedbackStats(true)}
+                className="flex items-center px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+                title="สถิติความคิดเห็น"
+              >
+                <ChartBarIcon className="h-4 w-4 mr-1" />
+                สถิติ
+              </button>
+              <button
+                onClick={() => {
+                  setShowConfigModal(true)
+                  fetchApiProviders()
+                }}
+                className="flex items-center px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+                title="ตั้งค่า API Key"
+              >
+                <CogIcon className="h-4 w-4 mr-1" />
+                ตั้งค่า
+              </button>
+              <span className="flex items-center text-sm text-gray-600">
+                <UserIcon className="h-4 w-4 mr-1" />
+                {user.full_name || user.username}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100"
+              >
+                <ArrowRightStartOnRectangleIcon className="h-4 w-4 mr-1" />
+                ออกจากระบบ
+              </button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Upload Section */}
+          <div className="lg:col-span-1">
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-lg font-medium mb-4 flex items-center">
+                <CloudArrowUpIcon className="h-5 w-5 mr-2 text-blue-600" />
+                นำเข้าเอกสาร
+              </h3>
+
+              <div className="space-y-4">
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
+                  <input
+                    type="file"
+                    onChange={handleFileUpload}
+                    accept=".pdf,.txt,.docx,.xlsx,.xls,.jpg,.jpeg,.png,.gif,.bmp"
+                    multiple
+                    className="hidden"
+                    id="file-upload"
+                    disabled={isUploading}
+                  />
+                  <label htmlFor="file-upload" className="cursor-pointer">
+                    <CloudArrowUpIcon className="mx-auto h-12 w-12 text-gray-400" />
+                    <p className="mt-2 text-sm text-gray-600">
+                      {isUploading ? 'กำลังอัปโหลด...' : 'คลิกเพื่ออัปโหลดไฟล์ (รองรับหลายไฟล์)'}
+                    </p>
+                    <p className="text-xs text-gray-500">PDF, TXT, DOCX, Excel, JPG, PNG, GIF, BMP</p>
+                  </label>
+                </div>
+
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handleBatchImport}
+                    disabled={isUploading || isProcessingFiles}
+                    className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                  >
+                    <CloudArrowUpIcon className="h-4 w-4 mr-2" />
+                    {isProcessingFiles ? 'กำลังประมวลผล...' : 'นำเข้าเอกสารแบบกลุ่ม'}
+                  </button>
+                </div>
+
+                {isProcessingFiles && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+                    <p className="text-sm text-blue-700">⏳ กำลังประมวลผลเอกสารเข้าสู่ระบบ...</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Google Sheets Section */}
+            <div className="bg-white rounded-lg shadow p-6 mt-6">
+              <h3 className="text-lg font-medium mb-4 flex items-center">
+                <ClipboardDocumentIcon className="h-5 w-5 mr-2 text-green-600" />
+                นำเข้า Google Sheets
+              </h3>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Google Sheets URL
+                  </label>
+                  <input
+                    type="url"
+                    value={sheetsUrl}
+                    onChange={(e) => setSheetsUrl(e.target.value)}
+                    placeholder="https://docs.google.com/spreadsheets/d/..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+                    disabled={isProcessingSheets}
+                  />
+                </div>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handlePreviewSheets}
+                    disabled={!sheetsUrl.trim() || isProcessingSheets}
+                    className="flex-1 bg-gray-500 text-white px-3 py-2 rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  >
+                    {isProcessingSheets ? 'กำลังดำเนินการ...' : 'ดูตัวอย่าง'}
+                  </button>
+                  <button
+                    onClick={handleProcessSheets}
+                    disabled={!sheetsUrl.trim() || isProcessingSheets}
+                    className="flex-1 bg-green-500 text-white px-3 py-2 rounded-md hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  >
+                    {isProcessingSheets ? 'กำลังประมวลผล...' : 'นำเข้าข้อมูล'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Google Sheets Preview Modal */}
+            {showSheetsPreview && sheetsPreview && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg max-w-2xl w-full max-h-[80vh] overflow-auto">
+                  <div className="p-6">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-medium">ตัวอย่างข้อมูล Google Sheets</h3>
+                      <button
+                        onClick={() => setShowSheetsPreview(false)}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {sheetsPreview.success ? (
+                      <div className="space-y-4">
+                        <div className="text-sm text-gray-600">
+                          <p>URL: {sheetsPreview.source_url}</p>
+                          <p>จำนวนแถว: {sheetsPreview.rows_count}</p>
+                        </div>
+                        <div className="bg-gray-50 p-4 rounded-lg max-h-96 overflow-auto">
+                          <pre className="whitespace-pre-wrap text-sm">
+                            {sheetsPreview.content}
+                          </pre>
+                        </div>
+                        <div className="flex justify-end space-x-2">
+                          <button
+                            onClick={() => setShowSheetsPreview(false)}
+                            className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+                          >
+                            ยกเลิก
+                          </button>
+                          <button
+                            onClick={handleProcessSheets}
+                            disabled={isProcessingSheets}
+                            className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:opacity-50"
+                          >
+                            {isProcessingSheets ? 'กำลังประมวลผล...' : 'ยืนยันการนำเข้า'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-red-600">
+                        <p>{sheetsPreview.message}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Documents List */}
+            <div className="bg-white rounded-lg shadow p-6 mt-6">
+              <h3 className="text-lg font-medium mb-4 flex items-center">
+                <DocumentTextIcon className="h-5 w-5 mr-2 text-blue-600" />
+                เอกสารที่อัปโหลด
+              </h3>
+
+              {documents.length > 0 ? (
+                <div className="space-y-2">
+                  {documents.map((doc) => (
+                    <div key={doc.id} className="flex items-center justify-between p-3 border rounded-md hover:bg-gray-50">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {doc.filename}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {(doc.size / 1024).toFixed(1)} KB
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteDocument(doc.id)}
+                        className="ml-2 p-1 text-red-500 hover:text-red-700"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <DocumentTextIcon className="mx-auto h-12 w-12 text-gray-300" />
+                  <p className="mt-2">ยังไม่มีเอกสาร</p>
+                </div>
+              )}
+            </div>
+
+            {/* AI Model Selection */}
+            <div className="bg-white rounded-lg shadow p-6 mt-6">
+              <h3 className="text-lg font-medium mb-4">การตั้งค่า AI</h3>
+
+              <div className="space-y-4">
+                {/* AI Provider Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    AI Provider
+                  </label>
+                  <select
+                    value={selectedProvider}
+                    onChange={(e) => {
+                      setSelectedProvider(e.target.value)
+                      setSelectedModel(aiProviders[e.target.value]?.default_model || '')
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    disabled={isLoading}
+                  >
+                    {Object.entries(aiProviders).map(([key, provider]) => (
+                      <option key={key} value={key}>
+                        {provider.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Model Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Model
+                  </label>
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    disabled={isLoading}
+                  >
+                    {aiProviders[selectedProvider]?.models.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Temperature */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Temperature: {temperature}
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    value={temperature}
+                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                    className="w-full"
+                    disabled={isLoading}
+                  />
+                  <div className="flex justify-between text-xs text-gray-500">
+                    <span>0 (Conservative)</span>
+                    <span>2 (Creative)</span>
+                  </div>
+                </div>
+
+                {/* Show Sources */}
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="show-sources"
+                    checked={showSources}
+                    onChange={(e) => setShowSources(e.target.checked)}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    disabled={isLoading}
+                  />
+                  <label htmlFor="show-sources" className="ml-2 block text-sm text-gray-700">
+                    แสดง Sources ที่ใช้ในคำตอบ
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Chat Section */}
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-lg shadow h-full flex flex-col">
+              <div className="p-6 border-b">
+                <h3 className="text-lg font-medium flex items-center">
+                  <ChatBubbleLeftRightIcon className="h-5 w-5 mr-2 text-blue-600" />
+                  ถามคำถามเกี่ยวกับเอกสาร
+                </h3>
+              </div>
+
+              <div className="flex-1 p-6 overflow-y-auto max-h-96">
+                {chatMessages.length > 0 ? (
+                  <div className="space-y-4">
+                    {chatMessages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div
+                          className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                            message.type === 'user'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-100 text-gray-900'
+                          }`}
+                        >
+                          <p className="text-sm">{message.content}</p>
+
+                          {/* Show model and provider for AI messages */}
+                          {message.type === 'ai' && message.model && (
+                            <p className="text-xs mt-2 text-gray-600">
+                              {message.ai_provider} • {message.model}
+                            </p>
+                          )}
+
+                          {/* Show sources for AI messages */}
+                          {message.type === 'ai' && message.sources && message.sources.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-gray-200">
+                              <p className="text-xs font-medium text-gray-700 mb-1">Sources:</p>
+                              {message.sources.slice(0, 3).map((source, idx) => (
+                                <div key={idx} className="text-xs text-gray-600 bg-gray-50 p-2 rounded mt-1">
+                                  <div className="font-medium">Similarity: {(source.similarity * 100).toFixed(1)}%</div>
+                                  <div className="mt-1">{source.text}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Feedback button for AI messages */}
+                          {message.type === 'ai' && (
+                            <div className="mt-2 pt-2 border-t border-gray-200">
+                              <button
+                                onClick={() => openFeedbackModal(message)}
+                                className="flex items-center text-xs text-gray-600 hover:text-blue-600 transition-colors"
+                                title="ให้ความคิดเห็น"
+                              >
+                                <StarIcon className="h-3 w-3 mr-1" />
+                                ให้ความคิดเห็น
+                              </button>
+                            </div>
+                          )}
+
+                          <p className={`text-xs mt-1 ${
+                            message.type === 'user' ? 'text-blue-100' : 'text-gray-500'
+                          }`}>
+                            {new Date(message.timestamp).toLocaleTimeString('th-TH')}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                    {isLoading && (
+                      <div className="flex justify-start">
+                        <div className="bg-gray-100 text-gray-900 px-4 py-2 rounded-lg">
+                          <div className="flex items-center space-x-2">
+                            <div className="animate-pulse">กำลังคิด...</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-gray-500">
+                    <ChatBubbleLeftRightIcon className="mx-auto h-12 w-12 text-gray-300" />
+                    <p className="mt-2">พิมพ์คำถามเพื่อเริ่มสนทนา</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-6 border-t">
+                <div className="flex space-x-4">
+                  <input
+                    type="text"
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
+                    placeholder="พิมพ์คำถามของคุณ..."
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    disabled={isLoading}
+                  />
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={isLoading || !question.trim()}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    ส่ง
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Feedback Modal */}
+      {showFeedbackModal && selectedChatForFeedback && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full max-h-[80vh] overflow-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-medium">ให้ความคิดเห็น</h3>
+                <button
+                  onClick={() => setShowFeedbackModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">คะแนนความพึงพอใจ</label>
+                  <div className="flex space-x-1">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        onClick={() => setFeedbackRating(star)}
+                        className="text-2xl hover:scale-110 transition-transform"
+                      >
+                        <StarIcon
+                          className={`h-6 w-6 ${
+                            star <= feedbackRating
+                              ? 'text-yellow-400 fill-current'
+                              : 'text-gray-300'
+                          }`}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">ประเภทความคิดเห็น</label>
+                  <select
+                    value={feedbackType}
+                    onChange={(e) => setFeedbackType(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  >
+                    <option value="good">ดีมาก</option>
+                    <option value="improvement">ปรับปรุง</option>
+                    <option value="bad">ไม่ดี</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">ความคิดเห็นเพิ่มเติม (ไม่บังคับ)</label>
+                  <textarea
+                    value={feedbackText}
+                    onChange={(e) => setFeedbackText(e.target.value)}
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="บอกเราว่าคิดยังไงกับคำตอบนี้..."
+                  />
+                </div>
+
+                <div className="flex justify-end space-x-2">
+                  <button
+                    onClick={() => setShowFeedbackModal(false)}
+                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    onClick={submitFeedback}
+                    disabled={feedbackRating === 0}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    ส่งความคิดเห็น
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Feedback Stats Modal */}
+      {showFeedbackStats && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[80vh] overflow-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold flex items-center">
+                  <ChartBarIcon className="h-6 w-6 mr-2 text-blue-600" />
+                  สถิติความคิดเห็น
+                </h3>
+                <button
+                  onClick={() => setShowFeedbackStats(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {feedbackStats?.success ? (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-blue-50 p-4 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">{feedbackStats.total_feedback}</div>
+                      <div className="text-sm text-gray-600">ความคิดเห็นทั้งหมด</div>
+                    </div>
+                    <div className="bg-green-50 p-4 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">{feedbackStats.average_rating}</div>
+                      <div className="text-sm text-gray-600">คะแนนเฉลี่ย</div>
+                    </div>
+                    <div className="bg-purple-50 p-4 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-600">{Object.keys(feedbackStats.provider_stats || {}).length}</div>
+                      <div className="text-sm text-gray-600">Provider ที่ใช้</div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h4 className="font-medium mb-3">การกระจายคะแนน</h4>
+                    <div className="space-y-2">
+                      {Object.entries(feedbackStats.rating_distribution || {}).map(([stars, count]) => (
+                        <div key={stars} className="flex items-center space-x-2">
+                          <div className="w-12 text-sm">{'★'.repeat(parseInt(stars))}</div>
+                          <div className="flex-1 bg-gray-200 rounded-full h-4 relative">
+                            <div
+                              className="bg-yellow-400 h-4 rounded-full"
+                              style={{ width: `${feedbackStats.total_feedback > 0 ? (count / feedbackStats.total_feedback) * 100 : 0}%` }}
+                            />
+                          </div>
+                          <div className="w-8 text-sm text-right">{count}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  <ChartBarIcon className="mx-auto h-12 w-12 text-gray-300" />
+                  <p className="mt-2">ยังไม่มีข้อมูลสถิติ</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* API Key Configuration Modal */}
+      {showConfigModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[80vh] overflow-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold flex items-center">
+                  <CogIcon className="h-6 w-6 mr-2 text-blue-600" />
+                  ตั้งค่า API Key
+                </h3>
+                <button
+                  onClick={() => setShowConfigModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {configStatus && (
+                <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium">สถานะการตั้งค่า:</span>
+                    <span className="text-sm font-bold text-blue-600">
+                      {configStatus.configured_providers}/{configStatus.total_providers} providers ({configStatus.configuration_percentage}%)
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-6">
+                {/* Add new API key */}
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-medium mb-3">เพิ่ม API Key</h4>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
+                      <select
+                        value={selectedConfigProvider}
+                        onChange={(e) => setSelectedConfigProvider(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      >
+                        <option value="">เลือก Provider</option>
+                        {apiProviders.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                      <input
+                        type="password"
+                        value={apiKeyInput}
+                        onChange={(e) => setApiKeyInput(e.target.value)}
+                        placeholder="ใส่ API key ของคุณ"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    </div>
+                    <button
+                      onClick={saveApiKey}
+                      disabled={!selectedConfigProvider || !apiKeyInput.trim()}
+                      className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      บันทึก API Key
+                    </button>
+                  </div>
+                </div>
+
+                {/* Existing API keys */}
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-medium mb-3">API Keys ที่ตั้งค่าแล้ว</h4>
+                  <div className="space-y-3">
+                    {apiProviders.map((provider) => (
+                      <div key={provider.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex-1">
+                          <div className="font-medium">{provider.name}</div>
+                          <div className="text-sm text-gray-600">
+                            {provider.has_api_key ? (
+                              <span className="text-green-600">✅ ตั้งค่าแล้ว</span>
+                            ) : (
+                              <span className="text-gray-400">ยังไม่ได้ตั้งค่า</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex space-x-2">
+                          {provider.has_api_key && (
+                            <>
+                              <button
+                                onClick={() => testApiKey(provider.id)}
+                                className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                              >
+                                ทดสอบ
+                              </button>
+                              <button
+                                onClick={() => deleteApiKey(provider.id)}
+                                className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                              >
+                                ลบ
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+            {/* Memory Management Modal */}
+            {showMemoryModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
+                  <div className="p-6">
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-xl font-bold flex items-center">
+                        <CpuChipIcon className="h-6 w-6 mr-2 text-blue-600" />
+                        จัดการ Memory (LightRAG)
+                      </h3>
+                      <button
+                        onClick={() => setShowMemoryModal(false)}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Memory Stats */}
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-medium mb-3">สถิติ Memory</h4>
+                          {memoryStats?.success ? (
+                            <div className="bg-gray-50 p-4 rounded-lg space-y-2 text-sm">
+                              <div>ทั้งหมด: {memoryStats.stats?.total_memories || 0}</div>
+                              <div>Session: {memoryStats.stats?.session_memories || 0}</div>
+                              <div>Working: {memoryStats.stats?.working_memories || 0}</div>
+                              <div>Long-term: {memoryStats.stats?.long_term_memories || 0}</div>
+                              <button
+                                onClick={consolidateMemories}
+                                className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
+                              >
+                                รวม Working → Long-term
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="bg-gray-50 p-4 rounded-lg text-sm text-gray-600">
+                              ไม่มีข้อมูลสถิติ
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Add Memory */}
+                        <div>
+                          <h4 className="font-medium mb-3">เพิ่ม Memory</h4>
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                ประเภท Memory
+                              </label>
+                              <select
+                                value={newMemoryType}
+                                onChange={(e) => setNewMemoryType(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                              >
+                                <option value="working">Working Memory</option>
+                                <option value="session">Session Memory</option>
+                                <option value="long_term">Long-term Memory</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                เนื้อหา
+                              </label>
+                              <textarea
+                                value={newMemoryContent}
+                                onChange={(e) => setNewMemoryContent(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                rows={3}
+                                placeholder="ใส่เนื้อหา memory..."
+                              />
+                            </div>
+                            <button
+                              onClick={addMemory}
+                              className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                            >
+                              เพิ่ม Memory
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Memory Search */}
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-medium mb-3">ค้นหา Memories</h4>
+                          <div className="space-y-3">
+                            <input
+                              type="text"
+                              value={memorySearchQuery}
+                              onChange={(e) => setMemorySearchQuery(e.target.value)}
+                              onKeyUp={(e) => e.key === 'Enter' && searchMemories()}
+                              className="w-full p-2 border border-gray-300 rounded-md"
+                              placeholder="ค้นหา memories..."
+                            />
+                            <button
+                              onClick={searchMemories}
+                              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                            >
+                              ค้นหา
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Search Results */}
+                        {memorySearchResults.length > 0 && (
+                          <div>
+                            <h4 className="font-medium mb-3">ผลการค้นหา ({memorySearchResults.length})</h4>
+                            <div className="bg-gray-50 rounded-lg max-h-64 overflow-auto">
+                              <div className="p-3 space-y-2">
+                                {memorySearchResults.map((memory: any, index: number) => (
+                                  <div key={index} className="bg-white p-3 rounded border text-sm">
+                                    <div className="font-medium text-gray-700 mb-1">
+                                      {memory.memory_type?.toUpperCase()}
+                                    </div>
+                                    <div className="text-gray-600">{memory.content}</div>
+                                    <div className="text-xs text-gray-400 mt-2">
+                                      {memory.timestamp}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Social Media Bots Modal */}
+            {showSocialBotsModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
+                  <div className="p-6">
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-xl font-bold flex items-center">
+                        <ShareIcon className="h-6 w-6 mr-2 text-blue-600" />
+                        จัดการ Social Media Bots
+                      </h3>
+                      <button
+                        onClick={() => setShowSocialBotsModal(false)}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Bot Configuration */}
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-medium mb-3">เพิ่ม Bot Configuration</h4>
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Platform
+                              </label>
+                              <select
+                                value={newBotPlatform}
+                                onChange={(e) => setNewBotPlatform(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                              >
+                                <option value="discord">Discord</option>
+                                <option value="facebook">Facebook</option>
+                                <option value="line">LINE</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Bot Token
+                              </label>
+                              <input
+                                type="password"
+                                value={newBotToken}
+                                onChange={(e) => setNewBotToken(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                placeholder="ใส่ bot token..."
+                              />
+                            </div>
+                            {(newBotPlatform === 'discord') && (
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  Webhook URL (สำหรับ Discord)
+                                </label>
+                                <input
+                                  type="url"
+                                  value={newBotWebhook}
+                                  onChange={(e) => setNewBotWebhook(e.target.value)}
+                                  className="w-full p-2 border border-gray-300 rounded-md"
+                                  placeholder="ใส่ webhook URL..."
+                                />
+                              </div>
+                            )}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Channels (คั่นด้วย comma)
+                              </label>
+                              <input
+                                type="text"
+                                value={newBotChannels}
+                                onChange={(e) => setNewBotChannels(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                placeholder="channel1, channel2, ..."
+                              />
+                            </div>
+                            <button
+                              onClick={addBotConfig}
+                              className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                            >
+                              เพิ่ม Bot Config
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Existing Bot Configs */}
+                        <div>
+                          <h4 className="font-medium mb-3">Configurations ที่ตั้งค่าแล้ว</h4>
+                          <div className="space-y-2">
+                            {Object.entries(botConfigs).map(([platform, config]: [string, any]) => (
+                              <div key={platform} className="bg-gray-50 p-3 rounded-lg">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <div className="font-medium capitalize">{platform}</div>
+                                    <div className="text-sm text-gray-600">
+                                      {config.is_active ? (
+                                        <span className="text-green-600">✅ ใช้งานได้</span>
+                                      ) : (
+                                        <span className="text-red-600">❌ ใช้งานไม่ได้</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex space-x-2">
+                                    <button
+                                      onClick={() => testBotConnection(platform)}
+                                      className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                                    >
+                                      ทดสอบ
+                                    </button>
+                                    <button
+                                      onClick={() => deleteBotConfig(platform)}
+                                      className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                                    >
+                                      ลบ
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                            {Object.keys(botConfigs).length === 0 && (
+                              <div className="text-center text-gray-500 py-4">
+                                ยังไม่มี configurations
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Send Message */}
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-medium mb-3">ส่งข้อความ</h4>
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Platform
+                              </label>
+                              <select
+                                value={selectedBotPlatform}
+                                onChange={(e) => setSelectedBotPlatform(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                              >
+                                <option value="discord">Discord</option>
+                                <option value="facebook">Facebook</option>
+                                <option value="line">LINE</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Channel / User ID
+                              </label>
+                              <input
+                                type="text"
+                                value={selectedBotChannel}
+                                onChange={(e) => setSelectedBotChannel(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                placeholder="channel หรือ user ID..."
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                ข้อความ
+                              </label>
+                              <textarea
+                                value={botMessage}
+                                onChange={(e) => setBotMessage(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                rows={4}
+                                placeholder="พิมพ์ข้อความ..."
+                              />
+                            </div>
+                            <button
+                              onClick={sendBotMessage}
+                              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                            >
+                              ส่งข้อความ
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Memory Management Modal */}
+            {showMemoryModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
+                  <div className="p-6">
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-xl font-bold flex items-center">
+                        <CpuChipIcon className="h-6 w-6 mr-2 text-blue-600" />
+                        จัดการ Memory (LightRAG)
+                      </h3>
+                      <button
+                        onClick={() => setShowMemoryModal(false)}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Memory Stats */}
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-medium mb-3">สถิติ Memory</h4>
+                          {memoryStats?.success ? (
+                            <div className="bg-gray-50 p-4 rounded-lg space-y-2 text-sm">
+                              <div>ทั้งหมด: {memoryStats.stats?.total_memories || 0}</div>
+                              <div>Session: {memoryStats.stats?.session_memories || 0}</div>
+                              <div>Working: {memoryStats.stats?.working_memories || 0}</div>
+                              <div>Long-term: {memoryStats.stats?.long_term_memories || 0}</div>
+                              <button
+                                onClick={consolidateMemories}
+                                className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
+                              >
+                                รวม Working → Long-term
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="bg-gray-50 p-4 rounded-lg text-sm text-gray-600">
+                              ไม่มีข้อมูลสถิติ
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Add Memory */}
+                        <div>
+                          <h4 className="font-medium mb-3">เพิ่ม Memory</h4>
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                ประเภท Memory
+                              </label>
+                              <select
+                                value={newMemoryType}
+                                onChange={(e) => setNewMemoryType(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                              >
+                                <option value="working">Working Memory</option>
+                                <option value="session">Session Memory</option>
+                                <option value="long_term">Long-term Memory</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                เนื้อหา
+                              </label>
+                              <textarea
+                                value={newMemoryContent}
+                                onChange={(e) => setNewMemoryContent(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                rows={3}
+                                placeholder="ใส่เนื้อหา memory..."
+                              />
+                            </div>
+                            <button
+                              onClick={addMemory}
+                              className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                            >
+                              เพิ่ม Memory
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Memory Search */}
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-medium mb-3">ค้นหา Memories</h4>
+                          <div className="space-y-3">
+                            <input
+                              type="text"
+                              value={memorySearchQuery}
+                              onChange={(e) => setMemorySearchQuery(e.target.value)}
+                              onKeyUp={(e) => e.key === 'Enter' && searchMemories()}
+                              className="w-full p-2 border border-gray-300 rounded-md"
+                              placeholder="ค้นหา memories..."
+                            />
+                            <button
+                              onClick={searchMemories}
+                              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                            >
+                              ค้นหา
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Search Results */}
+                        {memorySearchResults.length > 0 && (
+                          <div>
+                            <h4 className="font-medium mb-3">ผลการค้นหา ({memorySearchResults.length})</h4>
+                            <div className="bg-gray-50 rounded-lg max-h-64 overflow-auto">
+                              <div className="p-3 space-y-2">
+                                {memorySearchResults.map((memory: any, index: number) => (
+                                  <div key={index} className="bg-white p-3 rounded border text-sm">
+                                    <div className="font-medium text-gray-700 mb-1">
+                                      {memory.memory_type?.toUpperCase()}
+                                    </div>
+                                    <div className="text-gray-600">{memory.content}</div>
+                                    <div className="text-xs text-gray-400 mt-2">
+                                      {memory.timestamp}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Social Media Bots Modal */}
+            {showSocialBotsModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
+                  <div className="p-6">
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-xl font-bold flex items-center">
+                        <ShareIcon className="h-6 w-6 mr-2 text-blue-600" />
+                        จัดการ Social Media Bots
+                      </h3>
+                      <button
+                        onClick={() => setShowSocialBotsModal(false)}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Bot Configuration */}
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-medium mb-3">เพิ่ม Bot Configuration</h4>
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Platform
+                              </label>
+                              <select
+                                value={newBotPlatform}
+                                onChange={(e) => setNewBotPlatform(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                              >
+                                <option value="discord">Discord</option>
+                                <option value="facebook">Facebook</option>
+                                <option value="line">LINE</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Bot Token
+                              </label>
+                              <input
+                                type="password"
+                                value={newBotToken}
+                                onChange={(e) => setNewBotToken(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                placeholder="ใส่ bot token..."
+                              />
+                            </div>
+                            {(newBotPlatform === 'discord') && (
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  Webhook URL (สำหรับ Discord)
+                                </label>
+                                <input
+                                  type="url"
+                                  value={newBotWebhook}
+                                  onChange={(e) => setNewBotWebhook(e.target.value)}
+                                  className="w-full p-2 border border-gray-300 rounded-md"
+                                  placeholder="ใส่ webhook URL..."
+                                />
+                              </div>
+                            )}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Channels (คั่นด้วย comma)
+                              </label>
+                              <input
+                                type="text"
+                                value={newBotChannels}
+                                onChange={(e) => setNewBotChannels(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                placeholder="channel1, channel2, ..."
+                              />
+                            </div>
+                            <button
+                              onClick={addBotConfig}
+                              className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                            >
+                              เพิ่ม Bot Config
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Existing Bot Configs */}
+                        <div>
+                          <h4 className="font-medium mb-3">Configurations ที่ตั้งค่าแล้ว</h4>
+                          <div className="space-y-2">
+                            {Object.entries(botConfigs).map(([platform, config]: [string, any]) => (
+                              <div key={platform} className="bg-gray-50 p-3 rounded-lg">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <div className="font-medium capitalize">{platform}</div>
+                                    <div className="text-sm text-gray-600">
+                                      {config.is_active ? (
+                                        <span className="text-green-600">✅ ใช้งานได้</span>
+                                      ) : (
+                                        <span className="text-red-600">❌ ใช้งานไม่ได้</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex space-x-2">
+                                    <button
+                                      onClick={() => testBotConnection(platform)}
+                                      className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                                    >
+                                      ทดสอบ
+                                    </button>
+                                    <button
+                                      onClick={() => deleteBotConfig(platform)}
+                                      className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                                    >
+                                      ลบ
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                            {Object.keys(botConfigs).length === 0 && (
+                              <div className="text-center text-gray-500 py-4">
+                                ยังไม่มี configurations
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Send Message */}
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-medium mb-3">ส่งข้อความ</h4>
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Platform
+                              </label>
+                              <select
+                                value={selectedBotPlatform}
+                                onChange={(e) => setSelectedBotPlatform(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                              >
+                                <option value="discord">Discord</option>
+                                <option value="facebook">Facebook</option>
+                                <option value="line">LINE</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Channel / User ID
+                              </label>
+                              <input
+                                type="text"
+                                value={selectedBotChannel}
+                                onChange={(e) => setSelectedBotChannel(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                placeholder="channel หรือ user ID..."
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                ข้อความ
+                              </label>
+                              <textarea
+                                value={botMessage}
+                                onChange={(e) => setBotMessage(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                rows={4}
+                                placeholder="พิมพ์ข้อความ..."
+                              />
+                            </div>
+                            <button
+                              onClick={sendBotMessage}
+                              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                            >
+                              ส่งข้อความ
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+        </div>
+    </div>
+
+      {/* Memory Management Modal */}
+      {showMemoryModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold flex items-center">
+                  <CpuChipIcon className="h-6 w-6 mr-2 text-blue-600" />
+                  จัดการ Memory (LightRAG)
+                </h3>
+                <button
+                  onClick={() => setShowMemoryModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Memory Stats */}
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="font-medium mb-3">สถิติ Memory</h4>
+                    {memoryStats?.success ? (
+                      <div className="bg-gray-50 p-4 rounded-lg space-y-2 text-sm">
+                        <div>ทั้งหมด: {memoryStats.stats?.total_memories || 0}</div>
+                        <div>Session: {memoryStats.stats?.session_memories || 0}</div>
+                        <div>Working: {memoryStats.stats?.working_memories || 0}</div>
+                        <div>Long-term: {memoryStats.stats?.long_term_memories || 0}</div>
+                        <button
+                          onClick={consolidateMemories}
+                          className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
+                        >
+                          รวม Working → Long-term
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="bg-gray-50 p-4 rounded-lg text-sm text-gray-600">
+                        ไม่มีข้อมูลสถิติ
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Add Memory */}
+                  <div>
+                    <h4 className="font-medium mb-3">เพิ่ม Memory</h4>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          ประเภท Memory
+                        </label>
+                        <select
+                          value={newMemoryType}
+                          onChange={(e) => setNewMemoryType(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-md"
+                        >
+                          <option value="working">Working Memory</option>
+                          <option value="session">Session Memory</option>
+                          <option value="long_term">Long-term Memory</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          เนื้อหา
+                        </label>
+                        <textarea
+                          value={newMemoryContent}
+                          onChange={(e) => setNewMemoryContent(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-md"
+                          rows={3}
+                          placeholder="ใส่เนื้อหา memory..."
+                        />
+                      </div>
+                      <button
+                        onClick={addMemory}
+                        className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                      >
+                        เพิ่ม Memory
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Memory Search */}
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="font-medium mb-3">ค้นหา Memories</h4>
+                    <div className="space-y-3">
+                      <input
+                        type="text"
+                        value={memorySearchQuery}
+                        onChange={(e) => setMemorySearchQuery(e.target.value)}
+                        onKeyUp={(e) => e.key === 'Enter' && searchMemories()}
+                        className="w-full p-2 border border-gray-300 rounded-md"
+                        placeholder="ค้นหา memories..."
+                      />
+                      <button
+                        onClick={searchMemories}
+                        className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                      >
+                        ค้นหา
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Search Results */}
+                  {memorySearchResults.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-3">ผลการค้นหา ({memorySearchResults.length})</h4>
+                      <div className="bg-gray-50 rounded-lg max-h-64 overflow-auto">
+                        <div className="p-3 space-y-2">
+                          {memorySearchResults.map((memory: any, index: number) => (
+                            <div key={index} className="bg-white p-3 rounded border text-sm">
+                              <div className="font-medium text-gray-700 mb-1">
+                                {memory.memory_type?.toUpperCase()}
+                              </div>
+                              <div className="text-gray-600">{memory.content}</div>
+                              <div className="text-xs text-gray-400 mt-2">
+                                {memory.timestamp}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Social Media Bots Modal */}
+      {showSocialBotsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold flex items-center">
+                  <ShareIcon className="h-6 w-6 mr-2 text-blue-600" />
+                  จัดการ Social Media Bots
+                </h3>
+                <button
+                  onClick={() => setShowSocialBotsModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Bot Configuration */}
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="font-medium mb-3">เพิ่ม Bot Configuration</h4>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Platform
+                        </label>
+                        <select
+                          value={newBotPlatform}
+                          onChange={(e) => setNewBotPlatform(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-md"
+                        >
+                          <option value="discord">Discord</option>
+                          <option value="facebook">Facebook</option>
+                          <option value="line">LINE</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Bot Token
+                        </label>
+                        <input
+                          type="password"
+                          value={newBotToken}
+                          onChange={(e) => setNewBotToken(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-md"
+                          placeholder="ใส่ bot token..."
+                        />
+                      </div>
+                      {(newBotPlatform === 'discord') && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Webhook URL (สำหรับ Discord)
+                          </label>
+                          <input
+                            type="url"
+                            value={newBotWebhook}
+                            onChange={(e) => setNewBotWebhook(e.target.value)}
+                            className="w-full p-2 border border-gray-300 rounded-md"
+                            placeholder="ใส่ webhook URL..."
+                          />
+                        </div>
+                      )}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Channels (คั่นด้วย comma)
+                        </label>
+                        <input
+                          type="text"
+                          value={newBotChannels}
+                          onChange={(e) => setNewBotChannels(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-md"
+                          placeholder="channel1, channel2, ..."
+                        />
+                      </div>
+                      <button
+                        onClick={addBotConfig}
+                        className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                      >
+                        เพิ่ม Bot Config
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Existing Bot Configs */}
+                  <div>
+                    <h4 className="font-medium mb-3">Configurations ที่ตั้งค่าแล้ว</h4>
+                    <div className="space-y-2">
+                      {Object.entries(botConfigs).map(([platform, config]: [string, any]) => (
+                        <div key={platform} className="bg-gray-50 p-3 rounded-lg">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="font-medium capitalize">{platform}</div>
+                              <div className="text-sm text-gray-600">
+                                {config.is_active ? (
+                                  <span className="text-green-600">✅ ใช้งานได้</span>
+                                ) : (
+                                  <span className="text-red-600">❌ ใช้งานไม่ได้</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => testBotConnection(platform)}
+                                className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                              >
+                                ทดสอบ
+                              </button>
+                              <button
+                                onClick={() => deleteBotConfig(platform)}
+                                className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                              >
+                                ลบ
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {Object.keys(botConfigs).length === 0 && (
+                        <div className="text-center text-gray-500 py-4">
+                          ยังไม่มี configurations
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Send Message */}
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="font-medium mb-3">ส่งข้อความ</h4>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Platform
+                        </label>
+                        <select
+                          value={selectedBotPlatform}
+                          onChange={(e) => setSelectedBotPlatform(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-md"
+                        >
+                          <option value="discord">Discord</option>
+                          <option value="facebook">Facebook</option>
+                          <option value="line">LINE</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Channel / User ID
+                        </label>
+                        <input
+                          type="text"
+                          value={selectedBotChannel}
+                          onChange={(e) => setSelectedBotChannel(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-md"
+                          placeholder="channel หรือ user ID..."
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          ข้อความ
+                        </label>
+                        <textarea
+                          value={botMessage}
+                          onChange={(e) => setBotMessage(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-md"
+                          rows={4}
+                          placeholder="พิมพ์ข้อความ..."
+                        />
+                      </div>
+                      <button
+                        onClick={sendBotMessage}
+                        className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                      >
+                        ส่งข้อความ
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}    </div>
+    </div>
+  )
+}
