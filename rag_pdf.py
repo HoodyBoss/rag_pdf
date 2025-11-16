@@ -152,7 +152,7 @@ AI_PROVIDERS = {
 }
 
 # Default AI Provider
-DEFAULT_AI_PROVIDER = os.getenv("DEFAULT_AI_PROVIDER", "ollama")
+DEFAULT_AI_PROVIDER = os.getenv("DEFAULT_AI_PROVIDER", "gemini")
 
 def get_ai_provider_config(provider_name: str) -> dict:
     """Get AI provider configuration"""
@@ -6984,6 +6984,172 @@ with gr.Blocks(
             outputs=[config_status]
         )
 
+    with gr.Tab("🎛️ จัดการ Models"):
+        gr.Markdown("## จัดการ Models ของแต่ละ AI Provider")
+        gr.Markdown("เพิ่ม/ลบ/แก้ไข models ที่ใช้งานได้ในแต่ละ provider")
+
+        with gr.Row():
+            with gr.Column(scale=1):
+                # Provider selector
+                manage_provider_selector = gr.Dropdown(
+                    choices=[(AI_PROVIDERS[p]["name"], p) for p in AI_PROVIDERS.keys()],
+                    value="gemini",
+                    label="เลือก AI Provider ที่ต้องการจัดการ",
+                    info="เลือก provider เพื่อจัดการ models"
+                )
+
+                # Current models display
+                current_models_display = gr.Textbox(
+                    label="Models ปัจจุบัน",
+                    lines=8,
+                    interactive=False,
+                    placeholder="รายการ models..."
+                )
+
+                # Default model display
+                current_default_display = gr.Textbox(
+                    label="Model เริ่มต้น",
+                    interactive=False,
+                    placeholder="model เริ่มต้น..."
+                )
+
+            with gr.Column(scale=1):
+                gr.Markdown("### เพิ่ม Model ใหม่")
+                new_model_name = gr.Textbox(
+                    label="ชื่อ Model",
+                    placeholder="เช่น gemini-3.0-pro, gpt-5-turbo",
+                    info="ใส่ชื่อ model ที่ต้องการเพิ่ม"
+                )
+                add_model_btn = gr.Button("➕ เพิ่ม Model", variant="primary")
+                add_model_status = gr.HTML("")
+
+                gr.Markdown("### ลบ Model")
+                remove_model_selector = gr.Dropdown(
+                    choices=[],
+                    label="เลือก Model ที่ต้องการลบ",
+                    info="เลือก model ที่ต้องการลบออก"
+                )
+                remove_model_btn = gr.Button("🗑️ ลบ Model", variant="stop")
+                remove_model_status = gr.HTML("")
+
+                gr.Markdown("### ตั้ง Model เริ่มต้น")
+                set_default_selector = gr.Dropdown(
+                    choices=[],
+                    label="เลือก Model เริ่มต้น",
+                    info="เลือก model ที่จะเป็นค่าเริ่มต้น"
+                )
+                set_default_btn = gr.Button("⭐ ตั้งเป็นค่าเริ่มต้น", variant="secondary")
+                set_default_status = gr.HTML("")
+
+        # Functions for model management
+        def display_provider_models(provider):
+            """Display current models and default for selected provider"""
+            if provider not in AI_PROVIDERS:
+                return "Provider ไม่พบ", "", [], []
+
+            config = AI_PROVIDERS[provider]
+            models = config.get("models", [])
+            default = config.get("default_model", "")
+
+            models_text = "\n".join([f"• {m}" + (" ⭐" if m == default else "") for m in models])
+
+            return models_text, default, gr.update(choices=models), gr.update(choices=models)
+
+        def add_model_to_provider(provider, model_name):
+            """Add new model to provider"""
+            if not model_name or not model_name.strip():
+                return "❌ กรุณาใส่ชื่อ model", gr.update(), gr.update(), gr.update(), gr.update()
+
+            model_name = model_name.strip()
+
+            if provider not in AI_PROVIDERS:
+                return "❌ Provider ไม่พบ", gr.update(), gr.update(), gr.update(), gr.update()
+
+            if model_name in AI_PROVIDERS[provider]["models"]:
+                return f"⚠️ Model '{model_name}' มีอยู่แล้ว", gr.update(), gr.update(), gr.update(), gr.update()
+
+            AI_PROVIDERS[provider]["models"].append(model_name)
+            models = AI_PROVIDERS[provider]["models"]
+            default = AI_PROVIDERS[provider]["default_model"]
+            models_text = "\n".join([f"• {m}" + (" ⭐" if m == default else "") for m in models])
+
+            return (
+                f"✅ เพิ่ม model '{model_name}' เรียบร้อย",
+                models_text,
+                default,
+                gr.update(choices=models),
+                gr.update(choices=models)
+            )
+
+        def remove_model_from_provider(provider, model_name):
+            """Remove model from provider"""
+            if not model_name:
+                return "❌ กรุณาเลือก model ที่ต้องการลบ", gr.update(), gr.update(), gr.update(), gr.update()
+
+            if provider not in AI_PROVIDERS:
+                return "❌ Provider ไม่พบ", gr.update(), gr.update(), gr.update(), gr.update()
+
+            if model_name == AI_PROVIDERS[provider]["default_model"]:
+                return "❌ ไม่สามารถลบ model เริ่มต้นได้ กรุณาตั้ง model อื่นเป็นค่าเริ่มต้นก่อน", gr.update(), gr.update(), gr.update(), gr.update()
+
+            if model_name not in AI_PROVIDERS[provider]["models"]:
+                return f"❌ ไม่พบ model '{model_name}'", gr.update(), gr.update(), gr.update(), gr.update()
+
+            AI_PROVIDERS[provider]["models"].remove(model_name)
+            models = AI_PROVIDERS[provider]["models"]
+            default = AI_PROVIDERS[provider]["default_model"]
+            models_text = "\n".join([f"• {m}" + (" ⭐" if m == default else "") for m in models])
+
+            return (
+                f"✅ ลบ model '{model_name}' เรียบร้อย",
+                models_text,
+                default,
+                gr.update(choices=models),
+                gr.update(choices=models)
+            )
+
+        def set_default_model(provider, model_name):
+            """Set default model for provider"""
+            if not model_name:
+                return "❌ กรุณาเลือก model", gr.update(), gr.update()
+
+            if provider not in AI_PROVIDERS:
+                return "❌ Provider ไม่พบ", gr.update(), gr.update()
+
+            if model_name not in AI_PROVIDERS[provider]["models"]:
+                return f"❌ ไม่พบ model '{model_name}'", gr.update(), gr.update()
+
+            AI_PROVIDERS[provider]["default_model"] = model_name
+            models = AI_PROVIDERS[provider]["models"]
+            models_text = "\n".join([f"• {m}" + (" ⭐" if m == model_name else "") for m in models])
+
+            return f"✅ ตั้ง '{model_name}' เป็น model เริ่มต้นเรียบร้อย", models_text, model_name
+
+        # Event handlers
+        manage_provider_selector.change(
+            fn=display_provider_models,
+            inputs=manage_provider_selector,
+            outputs=[current_models_display, current_default_display, remove_model_selector, set_default_selector]
+        )
+
+        add_model_btn.click(
+            fn=add_model_to_provider,
+            inputs=[manage_provider_selector, new_model_name],
+            outputs=[add_model_status, current_models_display, current_default_display, remove_model_selector, set_default_selector]
+        )
+
+        remove_model_btn.click(
+            fn=remove_model_from_provider,
+            inputs=[manage_provider_selector, remove_model_selector],
+            outputs=[remove_model_status, current_models_display, current_default_display, remove_model_selector, set_default_selector]
+        )
+
+        set_default_btn.click(
+            fn=set_default_model,
+            inputs=[manage_provider_selector, set_default_selector],
+            outputs=[set_default_status, current_models_display, current_default_display]
+        )
+
     with gr.Tab("แชท"):
         # Simple provider initialization - start fast
         basic_providers = ["ollama"]
@@ -7006,14 +7172,14 @@ with gr.Blocks(
 
         logging.info(f"Quick available providers: {all_providers}")
 
-        # Start with Ollama - fastest loading
+        # Start with default provider (Gemini)
         provider_selector = gr.Dropdown(
             choices=provider_choices,
-            value="ollama",
+            value=DEFAULT_AI_PROVIDER,
             label="เลือก AI Provider",
             info="เลือกผู้ให้บริการ AI ที่ต้องการใช้"
         )
-        selected_provider = gr.State(value="ollama")
+        selected_provider = gr.State(value=DEFAULT_AI_PROVIDER)
 
         # Combined update function
         def update_provider_and_models(provider):
@@ -7024,9 +7190,9 @@ with gr.Blocks(
             print(f"Provider: {provider}, Models: {models}, Default: {default_model}")  # Debug
             return gr.update(choices=models, value=default_model), provider, default_model
 
-        # Start with Ollama models - no blocking operations
-        initial_models = get_provider_models("ollama")
-        initial_default_model = AI_PROVIDERS["ollama"]["default_model"] if initial_models else None
+        # Start with Gemini models as default
+        initial_models = get_provider_models(DEFAULT_AI_PROVIDER)
+        initial_default_model = AI_PROVIDERS[DEFAULT_AI_PROVIDER]["default_model"] if initial_models else None
 
         model_selector = gr.Dropdown(
             choices=initial_models,
