@@ -35,7 +35,8 @@
       "Bash(wmic:*)",
       "Bash(\"C:\\Users\\pompr\\.conda\\envs\\ragpdf\\python.exe\":*)",
       "Bash(find:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
