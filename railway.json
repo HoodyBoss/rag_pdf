@@ -4,7 +4,7 @@
     "buildCommand": "pip install -r requirements_minimal.txt && echo 'Build completed at $(date)'"
   },
   "deploy": {
-    "startCommand": "python authenticated_app.py",
+    "startCommand": "python rag_pdf.py",
     "restartPolicyType": "on_failure",
     "healthcheckPath": "/",
     "port": 7860
