@@ -347,6 +347,10 @@ LINE_ENABLED = os.getenv("LINE_ENABLED", "false").lower() == "true"  # เปิ
 LINE_DEFAULT_MODEL = os.getenv("LINE_DEFAULT_MODEL", "gemma3:latest")  # โมเดลเริ่มต้นสำหรับ LINE
 LINE_WEBHOOK_PORT = int(os.getenv("LINE_WEBHOOK_PORT", "5000"))  # Port สำหรับ LINE webhook
 
+# Global state for current model and provider (shared across chat and bots)
+current_model = None  # Will be set from chat interface
+current_provider = None  # Will be set from chat interface
+
 # Facebook Messenger Configuration
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "YOUR_FB_PAGE_ACCESS_TOKEN")
 FB_VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "YOUR_FB_VERIFY_TOKEN")
@@ -2600,8 +2604,15 @@ class RAGPDFBot(discord.Client):
         processing_msg = await message.reply("🔍 กำลังค้นหาคำตอบ...")
 
         try:
+            # ใช้ model และ provider จาก chat interface (ถ้ามี) หรือ fallback เป็น default
+            global current_model, current_provider
+            model = current_model if current_model else DISCORD_DEFAULT_MODEL
+            provider = current_provider if current_provider else "ollama"
+
+            logging.info(f"Discord Bot using model: {model}, provider: {provider}")
+
             # เรียกใช้ RAG system
-            stream = query_rag(question, chat_llm=DISCORD_DEFAULT_MODEL)
+            stream = query_rag(question, chat_llm=model, ai_provider=provider)
 
             # รวบรวมคำตอบ
             full_answer = ""
@@ -2982,11 +2993,18 @@ def line_callback():
 
 
 
-def process_line_question(event, user_id: str, question: str):
+def process_line_question(event, question: str, user_id: str):
     """ประมวลผลคำถามจาก LINE"""
+    global current_model, current_provider
     try:
+        # ใช้ model และ provider จาก chat interface (ถ้ามี) หรือ fallback เป็น default
+        model = current_model if current_model else LINE_DEFAULT_MODEL
+        provider = current_provider if current_provider else "ollama"
+
+        logging.info(f"LINE Bot using model: {model}, provider: {provider}")
+
         # เรียกใช้ฟังก์ชัน RAG เพื่อตอบคำถาม
-        response = query_rag(question, LINE_DEFAULT_MODEL, show_source=False)
+        response = query_rag(question, chat_llm=model, ai_provider=provider, show_source=False)
         answer = response.get('answer', 'ไม่พบคำตอบ')
 
         # จำกัดความยาวข้อความสำหรับ LINE (สูงสุด 5000 ตัวอักษร)
@@ -3048,14 +3066,21 @@ def facebook_webhook():
 
 def process_facebook_question(sender_id: str, question: str):
     """ประมวลผลคำถามจาก Facebook Messenger"""
+    global current_model, current_provider
     try:
         logging.info(f"Facebook Bot: รับคำถามจาก {sender_id} - {question}")
 
         # ส่งข้อความกำลังประมวลผล
         send_facebook_message(sender_id, "กำลังค้นหาคำตอบให้คุณ...")
 
+        # ใช้ model และ provider จาก chat interface (ถ้ามี) หรือ fallback เป็น default
+        model = current_model if current_model else FB_DEFAULT_MODEL
+        provider = current_provider if current_provider else "ollama"
+
+        logging.info(f"Facebook Bot using model: {model}, provider: {provider}")
+
         # เรียกใช้ฟังก์ชัน RAG เพื่อตอบคำถาม
-        response = query_rag(question, FB_DEFAULT_MODEL, show_source=False)
+        response = query_rag(question, chat_llm=model, ai_provider=provider, show_source=False)
         answer = response.get('answer', 'ไม่พบคำตอบ')
 
         # จำกัดความยาวข้อความสำหรับ Facebook (สูงสุด 2000 ตัวอักษร)
@@ -5383,6 +5408,12 @@ def chatbot_interface(history: List[Dict], llm_model: str, ai_provider: str = "o
     """
     อินเทอร์เฟซแชทบอทแบบ streaming with LightRAG support
     """
+    global current_model, current_provider
+
+    # Update global state so LINE/Discord/FB bots use the same model
+    current_model = llm_model
+    current_provider = ai_provider
+
     print(f"DEBUG: chatbot_interface received - Provider: {ai_provider}, Model: {llm_model}")  # Debug
     user_message = history[-1]["content"]
 
