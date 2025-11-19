@@ -3374,9 +3374,40 @@ def start_facebook_server():
     """เริ่ม Facebook Bot Server"""
     if setup_facebook_bot():
         try:
-            # Facebook ใช้ port เดียวกับ LINE ถ้า LINE ไม่ได้เปิดใช้งาน
-            port = FB_WEBHOOK_PORT if LINE_ENABLED else LINE_WEBHOOK_PORT
-            app.run(host='0.0.0.0', port=port, debug=False)
+            # ใช้ Flask app แยกสำหรับ Facebook เพื่อไม่ให้ชนกับ LINE
+            fb_app = Flask(__name__)
+
+            # Copy Facebook webhook routes to fb_app
+            @fb_app.route("/webhook", methods=['GET', 'POST'])
+            def facebook_webhook():
+                """Facebook Messenger Webhook"""
+                if not FB_ENABLED:
+                    abort(403)
+
+                if request.method == 'GET':
+                    if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
+                        if not request.args.get("hub.verify_token") == FB_VERIFY_TOKEN:
+                            return "Verification token mismatch", 403
+                        return request.args.get("hub.challenge"), 200
+                    return "Hello", 200
+
+                elif request.method == 'POST':
+                    data = request.get_json()
+                    if data and "object" in data and data["object"] == "page":
+                        for entry in data["entry"]:
+                            for messaging_event in entry["messaging"]:
+                                if messaging_event.get("message"):
+                                    sender_id = messaging_event["sender"]["id"]
+                                    message_text = messaging_event["message"].get("text")
+                                    if message_text:
+                                        threading.Thread(
+                                            target=process_facebook_question,
+                                            args=(sender_id, message_text)
+                                        ).start()
+                    return "OK", 200
+
+            # Run Facebook on its own port
+            fb_app.run(host='0.0.0.0', port=FB_WEBHOOK_PORT, debug=False)
         except Exception as e:
             logging.error(f"Facebook server error: {str(e)}")
 
@@ -7839,6 +7870,10 @@ if __name__ == "__main__":
         logging.info(f"Initial LightRAG Status: {initial_lightrag_status}")
     except Exception as e:
         logging.warning(f"Failed to update LightRAG status on load: {e}")
+
+    # Note: Webhooks run on different ports (5000, 5001)
+    # On Railway, only Gradio port (7860) is exposed
+    # Webhooks need to be started manually from Gradio interface for testing
 
     # Create and launch appropriate interface
     app_interface = create_authenticated_interface()
