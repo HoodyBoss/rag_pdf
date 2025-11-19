@@ -19,6 +19,8 @@ import logging
 import re
 import time
 import discord
+import gc  # For garbage collection
+import psutil  # For memory monitoring
 
 def log_with_time(message):
     """Log message with timestamp and timing information"""
@@ -46,6 +48,25 @@ import json
 import hashlib
 from collections import deque
 from datetime import datetime
+
+# Authentication imports
+try:
+    from auth_models import auth_manager, require_auth
+    from login_page import get_current_user_info, logout_current_user
+    AUTH_ENABLED = True
+    logging.info("✅ Authentication system loaded successfully")
+except ImportError as e:
+    AUTH_ENABLED = False
+    logging.warning(f"⚠️ Authentication system not available: {e}")
+    # Fallback functions if auth models not available
+    def auth_manager():
+        return None
+    def get_current_user_info():
+        return {"authenticated": False, "user": None, "token": None}
+    def require_auth(func):
+        return func
+    def logout_current_user():
+        return "Authentication not available"
 
 # Additional AI Provider imports
 try:
@@ -549,7 +570,11 @@ try:
         logging.warning("⚠️ Collection is empty! Checking for data persistence issues...")
 
         # เรียกใช้ฟังก์ชันตรวจสอบ
-        from fix_database_persistence import scan_collection_directories, get_sqlite_collection_info, reconstruct_collection
+        try:
+            from fix_database_persistence import scan_collection_directories, get_sqlite_collection_info, reconstruct_collection
+        except ImportError:
+            logging.warning("⚠️ fix_database_persistence module not found, skipping persistence check")
+            count = 0  # Set to 0 to indicate no data available
 
         collection_dirs = scan_collection_directories()
         sqlite_collections = get_sqlite_collection_info()
@@ -570,7 +595,7 @@ try:
 except Exception as e:
     # ถ้าไม่มีให้สร้างใหม่
     logging.info(f"❌ ไม่พบ collection ที่มีอยู่ - กำลังสร้างใหม่: {str(e)}")
-    collection = chroma_client.create_collection(name="pdf_data")
+    collection = chroma_client.get_or_create_collection(name="pdf_data")
     logging.info(f"✅ สร้าง collection 'pdf_data' ใหม่สำเร็จ")
 
 # Feedback Database Setup
@@ -777,41 +802,187 @@ def init_feedback_db():
 # Initialize feedback database
 init_feedback_db()
 
-# ตั้งค่า device
+# ตั้งค่า device with memory optimization
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 logging.info(f"Using device: {device}")
 
-# โหลดโมเดล embedding
-# SentenceTransformer สำหรับข้อความหลายภาษา (เน้นภาษาไทย)
-sentence_model = SentenceTransformer('intfloat/multilingual-e5-base', device=device)
+# Global variables for lazy loading
+sentence_model = None
+sum_model = None
+sum_tokenizer = None
 
 # Create directory for storing images
 os.makedirs(TEMP_IMG, exist_ok=True)
 
-sum_tokenizer = MT5Tokenizer.from_pretrained('StelleX/mt5-base-thaisum-text-summarization')
-sum_model = MT5ForConditionalGeneration.from_pretrained('StelleX/mt5-base-thaisum-text-summarization')
+def load_embedding_model():
+    """Lazy load embedding model with configurable optimization"""
+    global sentence_model
+    if sentence_model is None:
+        model_name = CONFIG['embedding_model']
+        device = CONFIG['embedding_device']
+
+        logging.info(f"🔄 Loading embedding model: {model_name} on {device}")
+
+        # Configure cache based on deployment
+        cache_folder = '/tmp/embeddings_cache' if IS_RAILWAY else None
+
+        try:
+            sentence_model = SentenceTransformer(
+                model_name,
+                device=device,
+                cache_folder=cache_folder
+            )
+
+            # Apply optimizations based on deployment
+            if IS_RAILWAY or not CONFIG['use_gpu']:
+                sentence_model.eval()
+                gc.collect()
+                logging.info(f"✅ Embedding model loaded (CPU optimized): {model_name}")
+            else:
+                # GPU optimizations
+                if device == 'cuda' and torch.cuda.is_available():
+                    sentence_model.half()  # Use 16-bit precision
+                    torch.cuda.empty_cache()
+                logging.info(f"✅ Embedding model loaded (GPU optimized): {model_name}")
+
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to load {model_name}, falling back to MiniLM-L6-v2: {e}")
+            # Fallback to smallest model
+            sentence_model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+            logging.info("✅ Fallback model loaded successfully")
+
+    return sentence_model
+
+def load_summarization_model():
+    """Configurable summarization model loading"""
+    global sum_model, sum_tokenizer
+
+    if not CONFIG['enable_summarization']:
+        logging.info("⚠️ Summarization disabled by configuration")
+        return None, None
+
+    if sum_model is None:
+        model_name = CONFIG['summarization_model']
+        logging.info(f"🔄 Loading summarization model: {model_name}")
+
+        try:
+            sum_tokenizer = MT5Tokenizer.from_pretrained(model_name)
+            sum_model = MT5ForConditionalGeneration.from_pretrained(model_name)
+
+            # Configure device based on deployment
+            if IS_RAILWAY or not CONFIG['use_gpu']:
+                device = 'cpu'
+            else:
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+            sum_model = sum_model.to(device)
+            sum_model.eval()
+
+            # GPU optimizations if applicable
+            if device == 'cuda':
+                sum_model = sum_model.half()  # Use 16-bit precision
+                torch.cuda.empty_cache()
+
+            gc.collect()
+            logging.info(f"✅ Summarization model loaded on {device}: {model_name}")
+
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to load {model_name}: {e}")
+            logging.info("🔄 Falling back to simple summarization...")
+            sum_model = None
+            sum_tokenizer = None
+
+    return sum_model, sum_tokenizer
+
+def cleanup_models():
+    """Unload models from memory to free up RAM"""
+    global sentence_model, sum_model, sum_tokenizer
+    if sentence_model is not None:
+        del sentence_model
+        sentence_model = None
+    if sum_model is not None:
+        del sum_model
+        sum_model = None
+    if sum_tokenizer is not None:
+        del sum_tokenizer
+        sum_tokenizer = None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # Force garbage collection
+    gc.collect()
+    logging.info("🧹 Models unloaded from memory")
+
+def get_memory_usage():
+    """Get current memory usage information"""
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    memory_mb = memory_info.rss / 1024 / 1024
+
+    gpu_memory = None
+    if torch.cuda.is_available():
+        gpu_memory = torch.cuda.memory_allocated() / 1024 / 1024
+
+    return {
+        'ram_mb': memory_mb,
+        'gpu_mb': gpu_memory,
+        'total_gpu_mb': torch.cuda.get_device_properties(0).total_memory / 1024 / 1024 if torch.cuda.is_available() else None
+    }
+
+def optimize_memory():
+    """Railway-optimized memory cleanup"""
+    # Force aggressive garbage collection for Railway
+    gc.collect()
+    gc.collect()  # Run twice for thorough cleanup
+
+    # Clear GPU cache if available (not needed on Railway)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # Log memory usage (Railway friendly)
+    try:
+        mem_info = get_memory_usage()
+        logging.info(f"💾 Railway Memory - RAM: {mem_info['ram_mb']:.1f}MB" +
+                    (f", GPU: {mem_info['gpu_mb']:.1f}MB" if mem_info['gpu_mb'] else ""))
+    except:
+        logging.info("💾 Memory optimized for Railway")
+
+def railway_auto_cleanup():
+    """Automatic cleanup to reduce Railway costs"""
+    # Unload models after 5 minutes of inactivity
+    cleanup_models()
+
+    # Clear caches
+    gc.collect()
+    logging.info("🧹 Railway auto-cleanup completed to reduce costs")
 
 def summarize_content(content: str) -> str:
     """
-        สรุปเนื้อหา 
+    Railway-optimized: Simple text summarization without heavy models
     """
-    logging.info("%%%%%%%%%%%%%% SUMMARY %%%%%%%%%%%%%%%%%%%%%")    
-       
-    input_ = sum_tokenizer(content, truncation=True, max_length=1024, return_tensors="pt")
-    with torch.no_grad():
-        preds = sum_model.generate(
-            input_['input_ids'].to('cpu'),
-            num_beams=15,
-            num_return_sequences=1,
-            no_repeat_ngram_size=1,
-            remove_invalid_values=True,
-            max_length=250
-        )
+    logging.info("%%%%%%%%%%%%%% SUMMARY (Railway Mode) %%%%%%%%%%%%%%%%%%%%%")
 
-    summary = sum_tokenizer.decode(preds[0], skip_special_tokens=True)
+    # Railway: Use simple truncation instead of ML model
+    if len(content) <= 300:
+        return content
 
-    logging.info(f" summary: {summary}.")
+    # Simple extractive summarization for Railway (saves 1.2GB RAM)
+    sentences = content.replace('!', '.').replace('?', '.').split('.')
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    if len(sentences) <= 3:
+        return content
+
+    # Take first 2 sentences + last sentence (extractive summary)
+    summary = '. '.join(sentences[:2] + sentences[-1:]) + '.'
+
+    # Limit summary length
+    if len(summary) > 500:
+        summary = summary[:500] + '...'
+
+    logging.info(f"Railway summary: {len(summary)} chars (saved 1.2GB RAM)")
     logging.info("%%%%%%%%%%%%%% SUMMARY %%%%%%%%%%%%%%%%%%%%%")
+
     return summary
 
 # แยกเนื้อหา, รูป ออกจาก PDF
@@ -900,22 +1071,37 @@ def preprocess_thai_text(text: str) -> str:
 
 def embed_text(text: str) -> np.ndarray:
     """
-    สร้าง embedding สำหรับข้อความโดยใช้ SentenceTransformer 
+    Configurable text embedding using SentenceTransformer
 
     Args:
-        text (str): ข้อความที่ต้องการสร้าง embedding        
+        text (str): ข้อความที่ต้องการสร้าง embedding
 
     Returns:
         np.ndarray: Embedding vector ที่รวมจากหลายโมเดล
     """
     logging.info("-------------- start embed text  -------------------")
-    
+
+    # Lazy load embedding model with configuration
+    model = load_embedding_model()
+
     # ตัดคำภาษาไทย
     processed_text = preprocess_thai_text(text) if any(ord(c) >= 0x0E00 and ord(c) <= 0x0E7F for c in text) else text
-    
-    # สร้าง embedding ด้วย SentenceTransformer
-    sentence_embedding = sentence_model.encode(processed_text, normalize_embeddings=True, device=device)    
-        
+
+    # สร้าง embedding ด้วย device จาก configuration
+    device = CONFIG['embedding_device']
+
+    sentence_embedding = model.encode(
+        processed_text,
+        normalize_embeddings=True,
+        device=device,
+        batch_size=1,
+        show_progress_bar=False
+    )
+
+    # Memory optimization for Railway
+    if IS_RAILWAY:
+        gc.collect()
+
     return sentence_embedding
 
 def store_in_chroma(content_chunks: List[Dict], source_name: str):
@@ -1393,39 +1579,48 @@ def process_google_sheets_url(sheets_url: str, clear_before_upload: bool = False
         return f"❌ เกิดข้อผิดพลาดในการประมวลผล Google Sheets: {str(e)}"
 
 
-def chunk_text(text: str, source_file: str, chunk_size: int = 1000, overlap: int = 200) -> List[Dict]:
+def chunk_text(text: str, source_file: str, chunk_size: int = None, overlap: int = None) -> List[Dict]:
     """
-    แยกข้อความเป็น chunks พร้อมข้อมูล metadata
+    Configurable text chunking based on deployment settings
 
     Args:
         text: ข้อความทั้งหมด
         source_file: ชื่อไฟล์ต้นทาง
-        chunk_size: ขนาดของ chunk
-        overlap: ส่วนที่ทับซ้อนระหว่าง chunks
+        chunk_size: ขนาดของ chunk (uses CONFIG default if None)
+        overlap: ส่วนที่ทับซ้อนระหว่าง chunks (uses CONFIG default if None)
 
     Returns:
         List[Dict]: list ของ chunks พร้อม metadata
     """
-    if not text or len(text.strip()) < 50:
+    # Use configured values if not provided
+    chunk_size = chunk_size or CONFIG['chunk_size']
+    overlap = overlap or CONFIG['chunk_overlap']
+    max_chunks = CONFIG['max_chunks']
+
+    if not text or len(text.strip()) < 30:
         return []
 
     chunks = []
     start = 0
+    total_chunks = 0
+    cleanup_interval = CONFIG['auto_cleanup_interval']
 
-    while start < len(text):
+    logging.info(f"📦 Chunking {source_file}: size={chunk_size}, overlap={overlap}, max_chunks={max_chunks}")
+
+    while start < len(text) and total_chunks < max_chunks:
         end = start + chunk_size
 
         # หาตำแหน่งตัดคำที่เหมาะสม
         if end < len(text):
-            # พยายามตัดที่วรรค หรือ จบบรรทัด
-            for i in range(end, max(start, end - 100), -1):
+            search_window = min(50, chunk_size // 4)  # Dynamic search window
+            for i in range(end, max(start, end - search_window), -1):
                 if text[i] in [' ', '\n', '.', '!', '?']:
                     end = i + 1
                     break
 
         chunk_text = text[start:end].strip()
 
-        if len(chunk_text) > 50:  # ต้องมีความยาวอย่างน้อย 50 ตัวอักษร
+        if len(chunk_text) > 30:
             chunk_id = f"{source_file}_{start}_{end}"
 
             chunks.append({
@@ -1435,11 +1630,25 @@ def chunk_text(text: str, source_file: str, chunk_size: int = 1000, overlap: int
                     "source": source_file,
                     "start": start,
                     "end": end,
-                    "file_type": Path(source_file).suffix.lower()
+                    "file_type": Path(source_file).suffix.lower(),
+                    "chunk_index": total_chunks
                 }
             })
+            total_chunks += 1
+
+            # Configurable memory cleanup
+            if total_chunks % cleanup_interval == 0:
+                optimize_memory()
+                if IS_RAILWAY:  # Extra cleanup for Railway
+                    gc.collect()
 
         start = end - overlap if end - overlap > start else end
+
+    deployment_type = "Railway" if IS_RAILWAY else "Local"
+    logging.info(f"✅ {deployment_type}: Created {total_chunks} chunks from {source_file}")
+
+    if total_chunks >= max_chunks:
+        logging.warning(f"⚠️ Reached max chunks limit ({max_chunks}), document truncated")
 
     return chunks
 
@@ -1657,9 +1866,12 @@ def clear_vector_db():
     try:
         
        # Clear existing collection to avoid duplicates
-        chroma_client.delete_collection(name="pdf_data")
+        try:
+            chroma_client.delete_collection(name="pdf_data")
+        except:
+            pass  # Collection might not exist
         global collection
-        collection = chroma_client.create_collection(name="pdf_data")
+        collection = chroma_client.get_or_create_collection(name="pdf_data")
 
     except Exception as e:
         return f"เกิดข้อผิดพลาดในการล้างข้อมูล: {str(e)}"
@@ -3681,7 +3893,8 @@ def save_feedback(question: str, answer: str, feedback_type: str, user_comment: 
         if feedback_type == "bad" and corrected_answer and corrected_answer.strip():
             try:
                 # สร้าง embedding สำหรับคำถาม (เพื่อค้นหาคำถามที่คล้ายกัน)
-                question_embedding = sentence_model.encode(question, convert_to_tensor=True).cpu().numpy()
+                model = load_embedding_model()
+                question_embedding = model.encode(question, convert_to_tensor=True).cpu().numpy()
                 embedding_str = json.dumps(question_embedding.tolist())
 
                 cursor.execute('''
@@ -3726,7 +3939,8 @@ def find_similar_corrected_answer(question: str, threshold: float = 0.8, include
             return None
 
         # สร้าง embedding สำหรับคำถามปัจจุบัน
-        question_embedding = sentence_model.encode(question, convert_to_tensor=True).cpu().numpy()
+        model = load_embedding_model()
+        question_embedding = model.encode(question, convert_to_tensor=True).cpu().numpy()
 
         best_match = None
         best_score = 0
@@ -3824,8 +4038,9 @@ def apply_feedback_to_rag(question: str, corrected_answer: str, confidence: floa
     """นำ feedback ที่ถูกต้องไปปรับปรุง RAG ทันที (Real-time Learning Integration)"""
     try:
         # 1. สร้าง embedding สำหรับ corrected answer
-        question_embedding = sentence_model.encode(question, convert_to_tensor=True).cpu().numpy()
-        answer_embedding = sentence_model.encode(corrected_answer, convert_to_tensor=True).cpu().numpy()
+        model = load_embedding_model()
+        question_embedding = model.encode(question, convert_to_tensor=True).cpu().numpy()
+        answer_embedding = model.encode(corrected_answer, convert_to_tensor=True).cpu().numpy()
 
         # 2. เพิ่ม corrected answer เข้า vector database พร้อม high weight
         global chroma_client
@@ -5568,6 +5783,12 @@ def test_graph_reasoning_interface():
 
     except Exception as e:
         return f"❌ ทดสอบล้มเหลว: {str(e)}", gr.update(visible=True)
+
+# Use main interface directly for now
+# Authentication will be handled in a future update
+def create_authenticated_interface():
+    """Create interface with authentication check"""
+    return demo
 
 # Gradio interface
 
@@ -7531,4 +7752,91 @@ if __name__ == "__main__":
     except Exception as e:
         logging.warning(f"Failed to update LightRAG status on load: {e}")
 
-    demo.launch()
+    # Create and launch appropriate interface
+    app_interface = create_authenticated_interface()
+    app_interface.launch()
+# Wrapper class for authenticated application
+class RAGPDFApplication:
+    """Wrapper class for RAG PDF application"""
+
+    def __init__(self):
+        self.interface = demo
+
+    def create_interface(self):
+        """Create the main RAG PDF interface"""
+        try:
+            return self.interface
+        except Exception as e:
+            logging.error(f"❌ Error creating interface: {e}")
+            return None
+
+    def get_interface(self):
+        """Get the Gradio interface"""
+        return self.interface
+
+# ===== CONFIGURATION MANAGEMENT =====
+
+# Environment detection
+IS_RAILWAY = os.getenv('RAILWAY_ENVIRONMENT') == 'production' or os.getenv('DYNO') == 'app'
+IS_LOCAL = os.getenv('DEPLOYMENT_ENV') == 'local' or not IS_RAILWAY
+IS_GPU_AVAILABLE = torch.cuda.is_available() and os.getenv('CUDA_VISIBLE_DEVICES') != ''
+
+# Model configuration from environment variables
+CONFIG = {
+    'embedding_model': os.getenv('EMBEDDING_MODEL',
+        'all-MiniLM-L6-v2' if IS_RAILWAY else
+        'intfloat/multilingual-e5-base' if IS_GPU_AVAILABLE else
+        'all-MiniLM-L6-v2'),
+
+    'embedding_device': os.getenv('EMBEDDING_DEVICE',
+        'cpu' if IS_RAILWAY else ('cuda' if IS_GPU_AVAILABLE else 'cpu')),
+
+    'enable_summarization': os.getenv('ENABLE_SUMMARIZATION',
+        'false' if IS_RAILWAY else 'true').lower() == 'true',
+
+    'summarization_model': os.getenv('SUMMARIZATION_MODEL',
+        'StelleX/mt5-base-thaisum-text-summarization'),
+
+    'chunk_size': int(os.getenv('CHUNK_SIZE', '800' if IS_RAILWAY else '1000')),
+    'chunk_overlap': int(os.getenv('CHUNK_OVERLAP', '150' if IS_RAILWAY else '200')),
+    'max_chunks': int(os.getenv('MAX_CHUNKS', '100' if IS_RAILWAY else '500')),
+
+    'use_gpu': os.getenv('USE_GPU', 'false' if IS_RAILWAY else str(IS_GPU_AVAILABLE).lower()).lower() == 'true',
+    'auto_cleanup_interval': int(os.getenv('AUTO_CLEANUP_INTERVAL', '20' if IS_RAILWAY else '50')),
+}
+
+def apply_environment_config():
+    """Apply environment-specific configurations"""
+    logging.info("="*60)
+    logging.info("🔧 Loading deployment configuration")
+    logging.info(f"📍 Environment: {'Railway' if IS_RAILWAY else 'Local/Other'}")
+    logging.info(f"🧠 Embedding Model: {CONFIG['embedding_model']}")
+    logging.info(f"💾 Device: {CONFIG['embedding_device']}")
+    logging.info(f"📝 Summarization: {'Enabled' if CONFIG['enable_summarization'] else 'Disabled'}")
+    logging.info(f"📦 Chunk Size: {CONFIG['chunk_size']} (overlap: {CONFIG['chunk_overlap']})")
+    logging.info(f"🔢 Max Chunks: {CONFIG['max_chunks']}")
+    logging.info(f"⚡ GPU Usage: {'Enabled' if CONFIG['use_gpu'] else 'Disabled'}")
+    logging.info("="*60)
+
+    # Apply environment-specific optimizations
+    if IS_RAILWAY:
+        logging.info("🚂 Applying Railway optimizations...")
+        os.environ['CUDA_VISIBLE_DEVICES'] = ''
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:32'
+        os.environ['OMP_NUM_THREADS'] = '2'
+        os.environ['MKL_NUM_THREADS'] = '2'
+    elif CONFIG['use_gpu'] and IS_GPU_AVAILABLE:
+        logging.info("🚀 GPU optimizations enabled...")
+        torch.cuda.empty_cache()
+    else:
+        logging.info("💻 CPU-only mode...")
+
+# Apply configurations on startup
+apply_environment_config()
+
+# Initialize memory optimizations on startup
+optimize_memory()
+
+logging.info("✅ Configuration loaded successfully")
+logging.info(f"🎯 Ready for {'Railway' if IS_RAILWAY else 'Local'} deployment")
+

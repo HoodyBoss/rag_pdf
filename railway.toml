@@ -1,5 +1,8 @@
+# Railway Deployment Configuration - Memory Optimized
+# Optimized for low-cost Railway deployment (1GB RAM limit)
+
 [build]
-builder = "railpack"
+builder = "nixpacks"
 
 [deploy]
 startCommand = "python rag_pdf.py"
@@ -10,3 +13,32 @@ restartPolicyMaxRetries = 10
 path = "/"
 port = 7860
 method = "GET"
+timeout = 30
+
+[env]
+# Railway Environment Variables
+PYTHON_VERSION = "3.10"
+RAILWAY_ENVIRONMENT = "production"
+PORT = "7860"
+
+# Memory optimization for Railway (1GB limit)
+PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:32"
+OMP_NUM_THREADS = "2"
+MKL_NUM_THREADS = "2"
+
+# Disable GPU (Railway doesn't have GPU)
+CUDA_VISIBLE_DEVICES = ""
+
+# Cache optimization - use temporary storage
+TRANSFORMERS_CACHE = "/tmp/transformers_cache"
+SENTENCE_TRANSFORMERS_HOME = "/tmp/sentence_transformers"
+HF_HOME = "/tmp/huggingface_cache"
+
+# Railway-specific optimizations
+RAILWAY_MEMORY_LIMIT = "1GB"
+RAILWAY_CPU_SHARES = "256"
+
+# Gradio optimizations for Railway
+GRADIO_SERVER_NAME = "0.0.0.0"
+GRADIO_SHARE = "false"
+GRADIO_IN_PROCESS = "true"
