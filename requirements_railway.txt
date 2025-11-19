@@ -8,6 +8,7 @@ uvicorn>=0.20.0,<0.40.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 requests>=2.30.0
+flask>=2.0.0,<3.0.0
 
 # Database and storage
 chromadb>=0.4.0,<1.5.0
@@ -18,6 +19,7 @@ numpy>=1.24.0,<2.0.0
 PyMuPDF>=1.23.0,<2.0.0
 python-docx>=1.0.0,<2.0.0
 pillow>=10.0.0,<12.0.0
+docx>=0.8.0,<1.0.0
 
 # Text processing (minimal versions)
 pythainlp>=4.0.0,<6.0.0
@@ -54,9 +56,13 @@ shortuuid>=1.0.0,<2.0.0
 # HTTP client
 httpx>=0.24.0,<1.0.0
 
+# Additional dependencies needed
+pandas>=1.5.0,<3.0.0
+asyncio-compat>=0.1.0
+
 # ML Libraries (minimal versions, CPU only)
-# torch>=2.0.0,<3.0.0  # Only if needed locally
-# transformers>=4.30.0,<5.0.0  # Heavy, remove if not essential
+torch>=2.0.0,<3.0.0
+transformers>=4.30.0,<5.0.0
 
 # Heavy packages removed for Railway memory optimization:
 # - torch, torchvision, torchaudio (2GB+)

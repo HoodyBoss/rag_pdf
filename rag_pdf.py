@@ -27,6 +27,30 @@ import discord
 import gc  # For garbage collection
 import psutil  # For memory monitoring
 
+# Optional imports with graceful fallbacks
+try:
+    from flask import Flask, request, abort
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+    print("⚠️ Flask not available - webhooks disabled")
+
+try:
+    from linebot import LineBotApi, WebhookHandler
+    from linebot.exceptions import InvalidSignatureError
+    from linebot.models import MessageEvent, TextMessage, TextSendMessage
+    LINE_AVAILABLE = True
+except ImportError:
+    LINE_AVAILABLE = False
+    print("⚠️ LINE bot SDK not available - LINE integration disabled")
+
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+    print("⚠️ Pandas not available - data analysis features disabled")
+
 def log_with_time(message):
     """Log message with timestamp and timing information"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -37,14 +61,9 @@ def measure_time(start_time, label):
     elapsed = time.time() - start_time
     log_with_time(f"⏱️ {label}: {elapsed:.2f}s")
     return elapsed
-import pandas as pd
 import asyncio
 import requests
 from dotenv import load_dotenv
-from flask import Flask, request, abort
-from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from typing import List, Dict, Tuple, Union
 import threading
 import docx
