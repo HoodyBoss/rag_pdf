@@ -3195,22 +3195,32 @@ def register_line_handlers():
                 user_message = event.message.text
                 user_id = event.source.user_id
 
-                logging.info(f"LINE Bot: รับคำถามจาก {user_id} - {user_message}")
+                logging.info("="*80)
+                logging.info(f"📥 LINE WEBHOOK - รับคำถามใหม่")
+                logging.info(f"   User ID: {user_id}")
+                logging.info(f"   Message: {user_message}")
+                logging.info(f"   Reply Token: {event.reply_token}")
+                logging.info(f"   Timestamp: {datetime.now().isoformat()}")
+                logging.info("="*80)
 
                 # ตอบกลับเพื่อแสดงว่ากำลังประมวลผล
                 line_bot_api.reply_message(
                     event.reply_token,
                     TextSendMessage(text="🔍 กำลังค้นหาคำตอบ...")
                 )
+                logging.info(f"✅ ส่งข้อความ 'กำลังค้นหา...' แล้ว (reply_token: {event.reply_token})")
 
                 # ประมวลผลคำถามใน background
                 threading.Thread(
                     target=process_line_question,
                     args=(event, user_message, user_id)
                 ).start()
+                logging.info(f"🔄 เริ่ม background thread สำหรับประมวลผล")
 
             except Exception as e:
-                logging.error(f"LINE Bot error: {str(e)}")
+                logging.error(f"❌ LINE Bot error: {str(e)}")
+                import traceback
+                logging.error(traceback.format_exc())
                 try:
                     line_bot_api.reply_message(
                         event.reply_token,
@@ -3236,47 +3246,76 @@ def setup_facebook_bot():
 def process_line_question(event, user_id: str, question: str):
     """ประมวลผลคำถามจาก LINE"""
     try:
+        logging.info("🔄 เริ่มประมวลผลคำถาม LINE")
+        logging.info(f"   User ID: {user_id}")
+        logging.info(f"   Question: {question}")
+
         # Detect AI provider from model name
         ai_provider = "gemini" if "gemini" in LINE_DEFAULT_MODEL.lower() else "ollama"
+        logging.info(f"   Model: {LINE_DEFAULT_MODEL}")
+        logging.info(f"   AI Provider: {ai_provider}")
 
         # เรียกใช้ฟังก์ชัน RAG เพื่อตอบคำถาม (returns generator/stream)
+        logging.info("🔍 เรียกใช้ query_rag...")
         stream = query_rag(question, LINE_DEFAULT_MODEL, ai_provider=ai_provider, show_source=False)
 
         # Collect answer from stream
+        logging.info("📝 กำลัง collect คำตอบจาก stream...")
         answer = ""
+        chunk_count = 0
         for chunk in stream:
+            chunk_count += 1
             if isinstance(chunk, dict):
                 # Handle streaming response format
                 if "message" in chunk and "content" in chunk["message"]:
-                    answer += chunk["message"]["content"]
+                    content = chunk["message"]["content"]
+                    answer += content
+                    logging.debug(f"   Chunk {chunk_count}: {len(content)} chars")
                 elif "content" in chunk:
-                    answer += chunk["content"]
+                    content = chunk["content"]
+                    answer += content
+                    logging.debug(f"   Chunk {chunk_count}: {len(content)} chars")
+
+        logging.info(f"✅ รับคำตอบเสร็จ: {chunk_count} chunks, {len(answer)} chars")
 
         # ถ้าไม่มีคำตอบ
         if not answer.strip():
             answer = "ไม่พบคำตอบ กรุณาลองถามใหม่อีกครั้ง"
+            logging.warning("⚠️ ไม่มีคำตอบจาก AI")
 
         # จำกัดความยาวข้อความสำหรับ LINE (สูงสุด 5000 ตัวอักษร)
         if len(answer) > 4900:
+            original_length = len(answer)
             answer = answer[:4900] + "\n\n... (คำตอบถูกตัดเนื่องจากความยาว)"
+            logging.info(f"✂️ ตัดคำตอบจาก {original_length} เป็น {len(answer)} chars")
 
         # ส่งคำตอบกลับไปยัง LINE
+        logging.info(f"📤 กำลังส่งคำตอบกลับไปยัง LINE (User: {user_id})")
+        logging.info(f"   Answer Preview: {answer[:100]}...")
+
         line_bot_api.push_message(
             user_id,
             TextSendMessage(text=answer)
         )
 
-        logging.info(f"LINE Bot: ตอบคำถามเรียบร้อย")
+        logging.info("="*80)
+        logging.info(f"✅ LINE Bot: ส่งคำตอบเรียบร้อย")
+        logging.info(f"   Total Answer Length: {len(answer)} chars")
+        logging.info(f"   Chunks Processed: {chunk_count}")
+        logging.info("="*80)
 
     except Exception as e:
-        logging.error(f"LINE processing error: {str(e)}")
+        logging.error("="*80)
+        logging.error(f"❌ LINE processing error: {str(e)}")
         import traceback
         logging.error(traceback.format_exc())
+        logging.error("="*80)
         try:
             line_bot_api.push_message(
                 user_id,
                 TextSendMessage(text="ขออภัย เกิดข้อผิดพลาดในการค้นหาคำตอบ กรุณาลองใหม่อีกครั้ง")
             )
+            logging.info("📤 ส่งข้อความ error กลับไปยัง LINE")
         except:
             pass
 
@@ -5818,27 +5857,49 @@ try:
     # Define webhook handlers as functions (will be registered to demo.app later)
     async def line_callback_api(request: Request):
         """LINE Webhook Callback via FastAPI"""
+        logging.info("="*80)
+        logging.info("🌐 LINE WEBHOOK - FastAPI Endpoint Called")
+        logging.info(f"   Method: {request.method}")
+        logging.info(f"   URL: {request.url}")
+        logging.info(f"   Client: {request.client.host if request.client else 'Unknown'}")
+
         if not LINE_ENABLED:
+            logging.warning("⚠️ LINE Bot is disabled")
             raise HTTPException(status_code=403, detail="LINE Bot is disabled")
 
         try:
             # Get LINE signature
             signature = request.headers.get('X-Line-Signature', '')
             body = await request.body()
+            body_text = body.decode('utf-8')
+
+            logging.info(f"📨 Request Details:")
+            logging.info(f"   Signature: {signature[:20]}..." if signature else "   Signature: None")
+            logging.info(f"   Body Length: {len(body_text)} bytes")
+            logging.info(f"   Body Preview: {body_text[:200]}...")
 
             # Setup LINE handler if not already initialized
             if not line_handler and LINE_ENABLED:
+                logging.info("🔧 LINE handler not initialized, setting up...")
                 setup_line_bot()
 
             if not line_handler:
+                logging.error("❌ LINE handler initialization failed")
                 raise HTTPException(status_code=400, detail="LINE handler not initialized")
 
             # Handle webhook
-            line_handler.handle(body.decode('utf-8'), signature)
+            logging.info("🔄 Calling line_handler.handle()...")
+            line_handler.handle(body_text, signature)
+            logging.info("✅ LINE webhook handled successfully")
+            logging.info("="*80)
             return PlainTextResponse('OK')
 
         except Exception as e:
-            logging.error(f"LINE webhook error: {e}")
+            logging.error("="*80)
+            logging.error(f"❌ LINE webhook error: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            logging.error("="*80)
             return PlainTextResponse('OK', status_code=200)  # Return 200 to avoid webhook retries
 
     async def facebook_webhook_api(request: Request):
