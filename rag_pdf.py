@@ -13,7 +13,12 @@ from pythainlp.tokenize import word_tokenize
 from transformers import MT5Tokenizer, MT5ForConditionalGeneration
 
 import torch
-import ollama
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+    print("⚠️ Ollama not available - using alternative AI providers")
 import shortuuid
 import logging
 import re
@@ -199,6 +204,10 @@ def call_ai_provider(provider_name: str, model: str, messages: list, stream: boo
     config = get_ai_provider_config(provider_name)
 
     if provider_name == "ollama":
+        # Check if Ollama is available
+        if not OLLAMA_AVAILABLE:
+            raise ImportError("Ollama library not available. Install with: pip install ollama")
+
         # Use existing Ollama implementation
         try:
             return ollama.chat(
