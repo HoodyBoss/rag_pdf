@@ -5911,11 +5911,83 @@ def create_authenticated_interface():
 
 # Gradio interface
 
-# Disable webhook endpoints for Railway stability
-# Webhooks cause memory issues and crashes
-FASTAPI_AVAILABLE = False
-webhook_app = None
-logging.info("Webhook endpoints disabled for Railway stability")
+# Create FastAPI app for webhooks (safe import)
+try:
+    from fastapi import FastAPI, Request, HTTPException
+    from fastapi.responses import PlainTextResponse
+    FASTAPI_AVAILABLE = True
+
+    webhook_app = FastAPI()
+
+    @webhook_app.post("/callback")
+    async def line_callback_api(request: Request):
+        """LINE Webhook Callback via FastAPI"""
+        if not LINE_ENABLED:
+            raise HTTPException(status_code=403, detail="LINE Bot is disabled")
+
+        try:
+            # Get LINE signature
+            signature = request.headers.get('X-Line-Signature', '')
+            body = await request.body()
+
+            # Setup LINE handler if not already initialized
+            if not line_handler and LINE_ENABLED:
+                setup_line_bot()
+
+            if not line_handler:
+                raise HTTPException(status_code=400, detail="LINE handler not initialized")
+
+            # Handle webhook
+            line_handler.handle(body.decode('utf-8'), signature)
+            return PlainTextResponse('OK')
+
+        except Exception as e:
+            logging.error(f"LINE webhook error: {e}")
+            return PlainTextResponse('OK', status_code=200)  # Return 200 to avoid webhook retries
+
+    @webhook_app.get("/webhook")
+    @webhook_app.post("/webhook")
+    async def facebook_webhook_api(request: Request):
+        """Facebook Webhook via FastAPI"""
+        if not FB_ENABLED:
+            raise HTTPException(status_code=403, detail="Facebook Bot is disabled")
+
+        if request.method == 'GET':
+            hub_mode = request.query_params.get('hub.mode')
+            hub_challenge = request.query_params.get('hub.challenge')
+            hub_verify_token = request.query_params.get('hub.verify_token')
+
+            if hub_mode == 'subscribe' and hub_challenge:
+                if hub_verify_token != FB_VERIFY_TOKEN:
+                    raise HTTPException(status_code=403, detail="Verification token mismatch")
+                return PlainTextResponse(hub_challenge)
+            return PlainTextResponse('Hello')
+
+        elif request.method == 'POST':
+            try:
+                data = await request.json()
+                if data and "object" in data and data["object"] == "page":
+                    for entry in data["entry"]:
+                        for messaging_event in entry["messaging"]:
+                            if messaging_event.get("message"):
+                                sender_id = messaging_event["sender"]["id"]
+                                message_text = messaging_event["message"].get("text")
+                                if message_text:
+                                    # Process in background
+                                    threading.Thread(
+                                        target=process_facebook_question,
+                                        args=(sender_id, message_text)
+                                    ).start()
+                return PlainTextResponse('OK', status_code=200)
+
+            except Exception as e:
+                logging.error(f"Facebook webhook error: {e}")
+                return PlainTextResponse('OK', status_code=200)
+
+except ImportError as e:
+    logging.warning(f"FastAPI not available: {e}")
+    FASTAPI_AVAILABLE = False
+    webhook_app = None
 
 # Gradio interface with FastAPI routes
 demo = gr.Blocks(
@@ -7886,8 +7958,18 @@ if __name__ == "__main__":
     # Create and launch appropriate interface with FastAPI routes
     app_interface = create_authenticated_interface()
 
-    # Webhooks disabled - skip mounting to ensure stability
-    logging.info("Skipping webhook mounting for Railway stability")
+    # Mount webhook FastAPI app to Gradio
+    if FASTAPI_AVAILABLE and webhook_app:
+        try:
+            # Gradio 4.x uses FastAPI backend - mount all webhook routes
+            app = app_interface.app if hasattr(app_interface, 'app') else app_interface.server_app
+            app.include_router(webhook_app, prefix="")
+            logging.info("✅ Webhook endpoints mounted to Gradio")
+        except Exception as e:
+            logging.warning(f"Could not mount webhook endpoints: {e}")
+            logging.info("Webhooks will be available via separate Flask servers")
+    else:
+        logging.warning("FastAPI not available - webhook endpoints disabled")
 
     app_interface.launch()
 # Wrapper class for authenticated application
