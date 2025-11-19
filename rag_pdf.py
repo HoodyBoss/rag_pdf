@@ -5911,15 +5911,13 @@ def create_authenticated_interface():
 
 # Gradio interface
 
-# Create FastAPI app for webhooks (safe import)
+# Create webhook route handlers (will be added to Gradio's FastAPI app later)
 try:
-    from fastapi import FastAPI, Request, HTTPException
+    from fastapi import Request, HTTPException
     from fastapi.responses import PlainTextResponse
     FASTAPI_AVAILABLE = True
 
-    webhook_app = FastAPI()
-
-    @webhook_app.post("/callback")
+    # Define webhook handlers as functions (will be registered to demo.app later)
     async def line_callback_api(request: Request):
         """LINE Webhook Callback via FastAPI"""
         if not LINE_ENABLED:
@@ -5945,8 +5943,6 @@ try:
             logging.error(f"LINE webhook error: {e}")
             return PlainTextResponse('OK', status_code=200)  # Return 200 to avoid webhook retries
 
-    @webhook_app.get("/webhook")
-    @webhook_app.post("/webhook")
     async def facebook_webhook_api(request: Request):
         """Facebook Webhook via FastAPI"""
         if not FB_ENABLED:
@@ -5987,7 +5983,6 @@ try:
 except ImportError as e:
     logging.warning(f"FastAPI not available: {e}")
     FASTAPI_AVAILABLE = False
-    webhook_app = None
 
 # Gradio interface with FastAPI routes
 demo = gr.Blocks(
@@ -7958,30 +7953,41 @@ if __name__ == "__main__":
     # Create and launch appropriate interface with FastAPI routes
     app_interface = create_authenticated_interface()
 
-    # Mount webhook routes to Gradio FastAPI app
-    if FASTAPI_AVAILABLE and webhook_app:
+    # Add webhook routes to Gradio's FastAPI app
+    if FASTAPI_AVAILABLE:
         try:
             # Get Gradio's FastAPI app
             gradio_app = None
             if hasattr(app_interface, 'app'):
                 gradio_app = app_interface.app
-            elif hasattr(app_interface, 'server_app'):
-                gradio_app = app_interface.server_app
+            elif hasattr(app_interface, 'fastapi_app'):
+                gradio_app = app_interface.fastapi_app
 
             if gradio_app:
-                # Add webhook routes directly to Gradio's FastAPI app
-                # Use APIRouter to get routes from webhook_app
-                for route in webhook_app.routes:
-                    gradio_app.routes.append(route)
-                logging.info("✅ Webhook endpoints (/callback, /webhook) mounted to Gradio")
+                # Add webhook routes directly using FastAPI decorators
+                gradio_app.add_api_route(
+                    "/callback",
+                    line_callback_api,
+                    methods=["POST"],
+                    name="line_webhook"
+                )
+                gradio_app.add_api_route(
+                    "/webhook",
+                    facebook_webhook_api,
+                    methods=["GET", "POST"],
+                    name="facebook_webhook"
+                )
+                logging.info("✅ Webhook endpoints (/callback, /webhook) registered to Gradio FastAPI")
+                logging.info(f"   - LINE callback: POST /callback (enabled: {LINE_ENABLED})")
+                logging.info(f"   - Facebook webhook: GET/POST /webhook (enabled: {FB_ENABLED})")
             else:
-                logging.warning("Could not find Gradio FastAPI app to mount webhooks")
+                logging.warning("⚠️ Could not find Gradio FastAPI app to register webhooks")
         except Exception as e:
-            logging.error(f"❌ Could not mount webhook endpoints: {e}")
+            logging.error(f"❌ Could not register webhook endpoints: {e}")
             import traceback
             logging.error(traceback.format_exc())
     else:
-        logging.warning("FastAPI not available - webhook endpoints disabled")
+        logging.warning("⚠️ FastAPI not available - webhook endpoints disabled")
 
     app_interface.launch()
 # Wrapper class for authenticated application
