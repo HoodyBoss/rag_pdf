@@ -1,0 +1,27 @@
+{
+  "build": {
+    "builder": "nixpacks",
+    "buildCommand": "pip install -r requirements_minimal.txt && echo 'Build completed at $(date)'"
+  },
+  "deploy": {
+    "startCommand": "python rag_pdf.py",
+    "restartPolicyType": "on_failure",
+    "healthcheckPath": "/",
+    "port": 7860
+  },
+  "env": {
+    "HOST": "0.0.0.0",
+    "PORT": "7860",
+    "PYTHONUNBUFFERED": "1",
+    "DEFAULT_MODEL": "gemma3:latest",
+    "CHROMA_PATH": "./chroma_db",
+    "CHROMA_PERSISTENT": "true",
+    "RAILWAY_VOLUME_MOUNT": "/app/chroma_db",
+    "OLLAMA_URL": "https://ollama-production-8d6d.up.railway.app",
+    "USE_FALLBACK": "true",
+    "MONGODB_URI": "${{MongoDB.MONGO_URL}}",
+    "DATABASE_NAME": "${{MongoDB.MONGODB:-rag_pdf_railway}}",
+    "JWT_SECRET": "OI-u97vDjcXUBpU7JuK6ArFlOV1wFOQQhH2223n4X4c",
+    "ADMIN_PASSWORD": "admin123"
+  }
+}
