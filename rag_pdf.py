@@ -7958,16 +7958,28 @@ if __name__ == "__main__":
     # Create and launch appropriate interface with FastAPI routes
     app_interface = create_authenticated_interface()
 
-    # Mount webhook FastAPI app to Gradio
+    # Mount webhook routes to Gradio FastAPI app
     if FASTAPI_AVAILABLE and webhook_app:
         try:
-            # Gradio 4.x uses FastAPI backend - mount all webhook routes
-            app = app_interface.app if hasattr(app_interface, 'app') else app_interface.server_app
-            app.include_router(webhook_app, prefix="")
-            logging.info("✅ Webhook endpoints mounted to Gradio")
+            # Get Gradio's FastAPI app
+            gradio_app = None
+            if hasattr(app_interface, 'app'):
+                gradio_app = app_interface.app
+            elif hasattr(app_interface, 'server_app'):
+                gradio_app = app_interface.server_app
+
+            if gradio_app:
+                # Add webhook routes directly to Gradio's FastAPI app
+                # Use APIRouter to get routes from webhook_app
+                for route in webhook_app.routes:
+                    gradio_app.routes.append(route)
+                logging.info("✅ Webhook endpoints (/callback, /webhook) mounted to Gradio")
+            else:
+                logging.warning("Could not find Gradio FastAPI app to mount webhooks")
         except Exception as e:
-            logging.warning(f"Could not mount webhook endpoints: {e}")
-            logging.info("Webhooks will be available via separate Flask servers")
+            logging.error(f"❌ Could not mount webhook endpoints: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
     else:
         logging.warning("FastAPI not available - webhook endpoints disabled")
 

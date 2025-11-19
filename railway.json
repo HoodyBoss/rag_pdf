@@ -22,6 +22,14 @@
     "MONGODB_URI": "${{MongoDB.MONGO_URL}}",
     "DATABASE_NAME": "${{MongoDB.MONGODB:-rag_pdf_railway}}",
     "JWT_SECRET": "OI-u97vDjcXUBpU7JuK6ArFlOV1wFOQQhH2223n4X4c",
-    "ADMIN_PASSWORD": "admin123"
+    "ADMIN_PASSWORD": "admin123",
+    "LINE_ENABLED": "true",
+    "LINE_CHANNEL_ACCESS_TOKEN": "${{LINE_CHANNEL_ACCESS_TOKEN}}",
+    "LINE_CHANNEL_SECRET": "${{LINE_CHANNEL_SECRET}}",
+    "LINE_DEFAULT_MODEL": "gemini-2.0-flash-exp",
+    "FB_ENABLED": "true",
+    "FB_PAGE_ACCESS_TOKEN": "${{FB_PAGE_ACCESS_TOKEN}}",
+    "FB_VERIFY_TOKEN": "${{FB_VERIFY_TOKEN}}",
+    "FB_DEFAULT_MODEL": "gemini-2.0-flash-exp"
   }
 }
