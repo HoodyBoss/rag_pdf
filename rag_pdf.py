@@ -178,8 +178,14 @@ load_dotenv()
 TEMP_IMG="./data/images"
 TEMP_VECTOR="./data/chromadb"
 TEMP_VECTOR_BACKUP="./data/chromadb_backup"
-# รายชื่อ Model ที่คุณมีบน Ollama
-AVAILABLE_MODELS = ["gemma3:latest", "qwen3:latest","llama3.2:latest"]
+# Available AI Models (Gemini only - Ollama not supported on Railway)
+AVAILABLE_MODELS = [
+    "gemini-2.0-flash-exp",      # Default - Fast and efficient
+    "gemini-1.5-flash",          # Fast for simple tasks
+    "gemini-1.5-pro",            # Better reasoning
+    "gemini-2.5-pro",            # Latest and most capable
+    "gemini-2.5-flash"           # Fast with better quality
+]
 
 # AI Provider Configuration
 AI_PROVIDERS = {
@@ -231,8 +237,8 @@ AI_PROVIDERS = {
     }
 }
 
-# Default AI Provider
-DEFAULT_AI_PROVIDER = os.getenv("DEFAULT_AI_PROVIDER", "ollama")
+# Default AI Provider (Gemini for Railway deployment)
+DEFAULT_AI_PROVIDER = os.getenv("DEFAULT_AI_PROVIDER", "gemini")
 
 def get_ai_provider_config(provider_name: str) -> dict:
     """Get AI provider configuration"""
@@ -420,7 +426,7 @@ DISCORD_ENABLED = os.getenv("DISCORD_ENABLED", "false").lower() == "true"  # เ
 # Discord Bot Configuration
 DISCORD_BOT_ENABLED = os.getenv("DISCORD_BOT_ENABLED", "false").lower() == "true"  # เปิด/ปิด Bot สำหรับรับคำถาม
 DISCORD_BOT_PREFIX = os.getenv("DISCORD_BOT_PREFIX", "!ask ")  # คำนำหน้าคำสั่ง
-DISCORD_DEFAULT_MODEL = os.getenv("DISCORD_DEFAULT_MODEL", "gemma3:latest")  # โมเดลเริ่มต้นสำหรับ Discord
+DISCORD_DEFAULT_MODEL = os.getenv("DISCORD_DEFAULT_MODEL", "gemini-2.0-flash-exp")  # โมเดลเริ่มต้นสำหรับ Discord (ใช้ Gemini แทน Ollama)
 DISCORD_RESPOND_NO_PREFIX = os.getenv("DISCORD_RESPOND_NO_PREFIX", "true").lower() == "true"  # ตอบคำถามที่ไม่มี prefix หรือไม่
 DISCORD_REPLY_MODE = os.getenv("DISCORD_REPLY_MODE", "channel")  # วิธีการตอบกลับ: channel/dm/both
 
@@ -7303,14 +7309,14 @@ Verify Token: {FB_VERIFY_TOKEN}
 
         logging.info(f"Quick available providers: {all_providers}")
 
-        # Start with Ollama - fastest loading
+        # Start with Gemini - best for Railway deployment
         provider_selector = gr.Dropdown(
             choices=provider_choices,
-            value="ollama",
+            value="gemini",
             label="เลือก AI Provider",
             info="เลือกผู้ให้บริการ AI ที่ต้องการใช้"
         )
-        selected_provider = gr.State(value="ollama")
+        selected_provider = gr.State(value="gemini")
 
         # Combined update function
         def update_provider_and_models(provider):
