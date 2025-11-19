@@ -11,7 +11,7 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from pythainlp.tokenize import word_tokenize
 from transformers import MT5Tokenizer, MT5ForConditionalGeneration
-
+  
 import torch
 try:
     import ollama
@@ -27,13 +27,7 @@ import discord
 import gc  # For garbage collection
 import psutil  # For memory monitoring
 
-# Optional imports with graceful fallbacks
-try:
-    from flask import Flask, request, abort
-    FLASK_AVAILABLE = True
-except ImportError:
-    FLASK_AVAILABLE = False
-    print("⚠️ Flask not available - webhooks disabled")
+# Flask removed - now using FastAPI for webhooks (no longer needed)
 
 try:
     from linebot import LineBotApi, WebhookHandler
@@ -3154,9 +3148,7 @@ def stop_discord_bot():
     return False
 
 
-# Flask App for LINE OA and Facebook Messenger
-app = Flask(__name__)
-
+# LINE OA and Facebook Messenger Setup (using FastAPI, not Flask)
 # LINE OA Setup
 line_bot_api = None
 line_handler = None
@@ -3232,24 +3224,8 @@ def setup_facebook_bot():
         return False
 
 
-@app.route("/callback", methods=['POST'])
-def line_callback():
-    """LINE Webhook Callback"""
-    if not LINE_ENABLED or not line_handler:
-        abort(400)
-
-    signature = request.headers['X-Line-Signature']
-    body = request.get_data(as_text=True)
-
-    try:
-        line_handler.handle(body, signature)
-    except InvalidSignatureError:
-        abort(400)
-
-    return 'OK'
-
-
-
+# Flask route removed - now using FastAPI endpoint at line ~5921
+# The /callback endpoint is registered via gradio_app.add_api_route() in __main__
 
 def process_line_question(event, user_id: str, question: str):
     """ประมวลผลคำถามจาก LINE"""
@@ -3281,39 +3257,8 @@ def process_line_question(event, user_id: str, question: str):
             pass
 
 
-@app.route("/webhook", methods=['GET', 'POST'])
-def facebook_webhook():
-    """Facebook Messenger Webhook"""
-    if not FB_ENABLED:
-        abort(403)
-
-    if request.method == 'GET':
-        if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
-            if not request.args.get("hub.verify_token") == FB_VERIFY_TOKEN:
-                return "Verification token mismatch", 403
-            return request.args.get("hub.challenge"), 200
-        return "Hello", 200
-
-    elif request.method == 'POST':
-        data = request.get_json()
-
-        if data and "object" in data and data["object"] == "page":
-            for entry in data["entry"]:
-                for messaging_event in entry["messaging"]:
-                    if messaging_event.get("message"):
-                        sender_id = messaging_event["sender"]["id"]
-                        message_text = messaging_event["message"].get("text")
-
-                        if message_text:
-                            # ใช้ thread แยกเพื่อประมวลผลคำถาม
-                            threading.Thread(
-                                target=process_facebook_question,
-                                args=(sender_id, message_text),
-                                daemon=True
-                            ).start()
-
-        return "OK", 200
-
+# Flask route removed - now using FastAPI endpoint at line ~5946
+# The /webhook endpoint is registered via gradio_app.add_api_route() in __main__
 
 def process_facebook_question(sender_id: str, question: str):
     """ประมวลผลคำถามจาก Facebook Messenger"""
@@ -3361,97 +3306,8 @@ def send_facebook_message(recipient_id: str, message_text: str):
         logging.error(f"Error sending Facebook message: {str(e)}")
 
 
-def start_line_server():
-    """เริ่ม LINE Bot Server"""
-    if setup_line_bot():
-        try:
-            app.run(host='0.0.0.0', port=LINE_WEBHOOK_PORT, debug=False)
-        except Exception as e:
-            logging.error(f"LINE server error: {str(e)}")
-
-
-def start_facebook_server():
-    """เริ่ม Facebook Bot Server"""
-    if setup_facebook_bot():
-        try:
-            # ใช้ Flask app แยกสำหรับ Facebook เพื่อไม่ให้ชนกับ LINE
-            fb_app = Flask(__name__)
-
-            # Copy Facebook webhook routes to fb_app
-            @fb_app.route("/webhook", methods=['GET', 'POST'])
-            def facebook_webhook():
-                """Facebook Messenger Webhook"""
-                if not FB_ENABLED:
-                    abort(403)
-
-                if request.method == 'GET':
-                    if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
-                        if not request.args.get("hub.verify_token") == FB_VERIFY_TOKEN:
-                            return "Verification token mismatch", 403
-                        return request.args.get("hub.challenge"), 200
-                    return "Hello", 200
-
-                elif request.method == 'POST':
-                    data = request.get_json()
-                    if data and "object" in data and data["object"] == "page":
-                        for entry in data["entry"]:
-                            for messaging_event in entry["messaging"]:
-                                if messaging_event.get("message"):
-                                    sender_id = messaging_event["sender"]["id"]
-                                    message_text = messaging_event["message"].get("text")
-                                    if message_text:
-                                        threading.Thread(
-                                            target=process_facebook_question,
-                                            args=(sender_id, message_text)
-                                        ).start()
-                    return "OK", 200
-
-            # Run Facebook on its own port
-            fb_app.run(host='0.0.0.0', port=FB_WEBHOOK_PORT, debug=False)
-        except Exception as e:
-            logging.error(f"Facebook server error: {str(e)}")
-
-
-def start_line_bot_thread():
-    """เริ่ม LINE Bot ใน thread แยก"""
-    global line_thread
-    if line_thread and line_thread.is_alive():
-        logging.warning("LINE Bot กำลังทำงานอยู่แล้ว")
-        return False
-
-    if not LINE_ENABLED:
-        logging.info("LINE Bot is disabled")
-        return False
-
-    try:
-        line_thread = threading.Thread(target=start_line_server, daemon=True)
-        line_thread.start()
-        logging.info(f"LINE Bot server started on port {LINE_WEBHOOK_PORT}")
-        return True
-    except Exception as e:
-        logging.error(f"Failed to start LINE Bot: {str(e)}")
-        return False
-
-
-def start_facebook_bot_thread():
-    """เริ่ม Facebook Bot ใน thread แยก"""
-    global fb_thread
-    if fb_thread and fb_thread.is_alive():
-        logging.warning("Facebook Bot กำลังทำงานอยู่แล้ว")
-        return False
-
-    if not FB_ENABLED:
-        logging.info("Facebook Bot is disabled")
-        return False
-
-    try:
-        fb_thread = threading.Thread(target=start_facebook_server, daemon=True)
-        fb_thread.start()
-        logging.info(f"Facebook Bot server started on port {FB_WEBHOOK_PORT}")
-        return True
-    except Exception as e:
-        logging.error(f"Failed to start Facebook Bot: {str(e)}")
-        return False
+# Flask server functions removed - webhooks now handled by FastAPI endpoints
+# mounted to Gradio's FastAPI app at startup (see __main__ section)
 
 
 def determine_optimal_results(question: str) -> int:
