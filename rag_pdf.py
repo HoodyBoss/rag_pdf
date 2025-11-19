@@ -428,14 +428,14 @@ DISCORD_REPLY_MODE = os.getenv("DISCORD_REPLY_MODE", "channel")  # วิธี�
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "YOUR_LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "YOUR_LINE_CHANNEL_SECRET")
 LINE_ENABLED = os.getenv("LINE_ENABLED", "false").lower() == "true"  # เปิด/ปิด LINE OA
-LINE_DEFAULT_MODEL = os.getenv("LINE_DEFAULT_MODEL", "gemma3:latest")  # โมเดลเริ่มต้นสำหรับ LINE
+LINE_DEFAULT_MODEL = os.getenv("LINE_DEFAULT_MODEL", "gemini-2.0-flash-exp")  # โมเดลเริ่มต้นสำหรับ LINE (ใช้ Gemini แทน Ollama บน Railway)
 LINE_WEBHOOK_PORT = int(os.getenv("LINE_WEBHOOK_PORT", "5000"))  # Port สำหรับ LINE webhook
 
 # Facebook Messenger Configuration
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "YOUR_FB_PAGE_ACCESS_TOKEN")
 FB_VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "YOUR_FB_VERIFY_TOKEN")
 FB_ENABLED = os.getenv("FB_ENABLED", "false").lower() == "true"  # เปิด/ปิด Facebook Messenger
-FB_DEFAULT_MODEL = os.getenv("FB_DEFAULT_MODEL", "gemma3:latest")  # โมเดลเริ่มต้นสำหรับ FB
+FB_DEFAULT_MODEL = os.getenv("FB_DEFAULT_MODEL", "gemini-2.0-flash-exp")  # โมเดลเริ่มต้นสำหรับ FB (ใช้ Gemini แทน Ollama บน Railway)
 FB_WEBHOOK_PORT = int(os.getenv("FB_WEBHOOK_PORT", "5001"))  # Port สำหรับ FB webhook
 FB_WEBHOOK = int(os.getenv("FB_WEBHOOK", "5001"))  # Port สำหรับ FB webhook
 

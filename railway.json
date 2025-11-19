@@ -13,7 +13,7 @@
     "HOST": "0.0.0.0",
     "PORT": "7860",
     "PYTHONUNBUFFERED": "1",
-    "DEFAULT_MODEL": "gemma3:latest",
+    "DEFAULT_MODEL": "gemini-2.0-flash-exp",
     "CHROMA_PATH": "./chroma_db",
     "CHROMA_PERSISTENT": "true",
     "RAILWAY_VOLUME_MOUNT": "/app/chroma_db",
