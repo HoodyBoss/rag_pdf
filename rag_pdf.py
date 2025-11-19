@@ -3230,9 +3230,25 @@ def setup_facebook_bot():
 def process_line_question(event, user_id: str, question: str):
     """ประมวลผลคำถามจาก LINE"""
     try:
-        # เรียกใช้ฟังก์ชัน RAG เพื่อตอบคำถาม
-        response = query_rag(question, LINE_DEFAULT_MODEL, show_source=False)
-        answer = response.get('answer', 'ไม่พบคำตอบ')
+        # Detect AI provider from model name
+        ai_provider = "gemini" if "gemini" in LINE_DEFAULT_MODEL.lower() else "ollama"
+
+        # เรียกใช้ฟังก์ชัน RAG เพื่อตอบคำถาม (returns generator/stream)
+        stream = query_rag(question, LINE_DEFAULT_MODEL, ai_provider=ai_provider, show_source=False)
+
+        # Collect answer from stream
+        answer = ""
+        for chunk in stream:
+            if isinstance(chunk, dict):
+                # Handle streaming response format
+                if "message" in chunk and "content" in chunk["message"]:
+                    answer += chunk["message"]["content"]
+                elif "content" in chunk:
+                    answer += chunk["content"]
+
+        # ถ้าไม่มีคำตอบ
+        if not answer.strip():
+            answer = "ไม่พบคำตอบ กรุณาลองถามใหม่อีกครั้ง"
 
         # จำกัดความยาวข้อความสำหรับ LINE (สูงสุด 5000 ตัวอักษร)
         if len(answer) > 4900:
@@ -3248,6 +3264,8 @@ def process_line_question(event, user_id: str, question: str):
 
     except Exception as e:
         logging.error(f"LINE processing error: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
         try:
             line_bot_api.push_message(
                 user_id,
@@ -3268,9 +3286,25 @@ def process_facebook_question(sender_id: str, question: str):
         # ส่งข้อความกำลังประมวลผล
         send_facebook_message(sender_id, "กำลังค้นหาคำตอบให้คุณ...")
 
-        # เรียกใช้ฟังก์ชัน RAG เพื่อตอบคำถาม
-        response = query_rag(question, FB_DEFAULT_MODEL, show_source=False)
-        answer = response.get('answer', 'ไม่พบคำตอบ')
+        # Detect AI provider from model name
+        ai_provider = "gemini" if "gemini" in FB_DEFAULT_MODEL.lower() else "ollama"
+
+        # เรียกใช้ฟังก์ชัน RAG เพื่อตอบคำถาม (returns generator/stream)
+        stream = query_rag(question, FB_DEFAULT_MODEL, ai_provider=ai_provider, show_source=False)
+
+        # Collect answer from stream
+        answer = ""
+        for chunk in stream:
+            if isinstance(chunk, dict):
+                # Handle streaming response format
+                if "message" in chunk and "content" in chunk["message"]:
+                    answer += chunk["message"]["content"]
+                elif "content" in chunk:
+                    answer += chunk["content"]
+
+        # ถ้าไม่มีคำตอบ
+        if not answer.strip():
+            answer = "ไม่พบคำตอบ กรุณาลองถามใหม่อีกครั้ง"
 
         # จำกัดความยาวข้อความสำหรับ Facebook (สูงสุด 2000 ตัวอักษร)
         if len(answer) > 1900:
@@ -3283,6 +3317,8 @@ def process_facebook_question(sender_id: str, question: str):
 
     except Exception as e:
         logging.error(f"Facebook processing error: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
         try:
             send_facebook_message(sender_id, "ขออภัย เกิดข้อผิดพลาดในการค้นหาคำตอบ กรุณาลองใหม่อีกครั้ง")
         except:
