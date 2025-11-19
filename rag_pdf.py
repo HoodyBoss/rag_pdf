@@ -6051,7 +6051,8 @@ demo = gr.Blocks(
         font-family: 'Courier New', monospace;
     }
     """
-) as demo:
+
+with demo:
     logo="https://camo.githubusercontent.com/9433204b08afdc976c2e4f5a4ba0d81f8877b585cc11206e2969326d25c41657/68747470733a2f2f63646e2e6a7364656c6976722e6e65742f67682f6e61726f6e67736b6d6c2f68746d6c352d6c6561726e406c61746573742f6173736574732f696d67732f546c697665636f64654c6f676f2d3435302e77656270"
     gr.Markdown(f"""<h3 style='display: flex; align-items: center; gap: 15px; padding: 10px; margin: 0;'>
         <img alt='T-LIVE-CODE' src='{logo}' style='height: 100px;' >
