@@ -174,6 +174,39 @@ except ImportError as e:
 # Load environment variables from .env file
 load_dotenv()
 
+# Log critical environment variables at startup
+logging.info("="*80)
+logging.info("🔧 Environment Variables Check")
+logging.info("="*80)
+
+# Check API Keys
+gemini_key = os.getenv("GEMINI_API_KEY")
+if gemini_key:
+    masked = f"{gemini_key[:10]}...{gemini_key[-4:]}" if len(gemini_key) > 14 else "***"
+    logging.info(f"✅ GEMINI_API_KEY: {masked} (length: {len(gemini_key)})")
+else:
+    logging.error("❌ GEMINI_API_KEY: NOT SET")
+
+# Check LINE Config
+line_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+if line_token and line_token != "YOUR_LINE_CHANNEL_ACCESS_TOKEN":
+    masked = f"{line_token[:10]}...{line_token[-4:]}" if len(line_token) > 14 else "***"
+    logging.info(f"✅ LINE_CHANNEL_ACCESS_TOKEN: {masked}")
+else:
+    logging.warning("⚠️ LINE_CHANNEL_ACCESS_TOKEN: NOT SET or DEFAULT")
+
+line_secret = os.getenv("LINE_CHANNEL_SECRET")
+if line_secret and line_secret != "YOUR_LINE_CHANNEL_SECRET":
+    masked = f"{line_secret[:6]}...{line_secret[-4:]}" if len(line_secret) > 10 else "***"
+    logging.info(f"✅ LINE_CHANNEL_SECRET: {masked}")
+else:
+    logging.warning("⚠️ LINE_CHANNEL_SECRET: NOT SET or DEFAULT")
+
+logging.info(f"📌 LINE_ENABLED: {os.getenv('LINE_ENABLED', 'false')}")
+logging.info(f"📌 LINE_DEFAULT_MODEL: {os.getenv('LINE_DEFAULT_MODEL', 'not set')}")
+logging.info(f"📌 DEFAULT_AI_PROVIDER: {os.getenv('DEFAULT_AI_PROVIDER', 'not set')}")
+logging.info("="*80)
+
 # Image folder
 TEMP_IMG="./data/images"
 TEMP_VECTOR="./data/chromadb"
@@ -343,11 +376,22 @@ def call_ai_provider(provider_name: str, model: str, messages: list, stream: boo
             return ({"message": {"content": error_msg}} for _ in range(1))
 
         api_key = os.getenv(config["api_key_env"])
+
+        # Log API key status (masked for security)
+        if api_key:
+            masked_key = f"{api_key[:10]}...{api_key[-4:]}" if len(api_key) > 14 else "***"
+            logging.info(f"🔑 Gemini API Key: {masked_key} (length: {len(api_key)})")
+        else:
+            logging.error(f"❌ Gemini API Key NOT FOUND! Environment variable: {config['api_key_env']}")
+            logging.error(f"   Available env vars: {', '.join([k for k in os.environ.keys() if 'API' in k or 'KEY' in k])}")
+
         if not api_key:
             raise ValueError(f"API key not found for {provider_name}. Set {config['api_key_env']} environment variable.")
 
         try:
+            logging.info(f"🔧 Configuring Gemini with API key...")
             genai.configure(api_key=api_key)
+            logging.info(f"🤖 Creating GenerativeModel: {model}")
             model_obj = genai.GenerativeModel(model)
 
             # Convert messages to Gemini format
@@ -3213,7 +3257,7 @@ def register_line_handlers():
                 # ประมวลผลคำถามใน background
                 threading.Thread(
                     target=process_line_question,
-                    args=(event, user_message, user_id)
+                    args=(event, user_id, user_message)  # Fixed parameter order: event, user_id, question
                 ).start()
                 logging.info(f"🔄 เริ่ม background thread สำหรับประมวลผล")
 
@@ -3290,8 +3334,16 @@ def process_line_question(event, user_id: str, question: str):
             logging.info(f"✂️ ตัดคำตอบจาก {original_length} เป็น {len(answer)} chars")
 
         # ส่งคำตอบกลับไปยัง LINE
-        logging.info(f"📤 กำลังส่งคำตอบกลับไปยัง LINE (User: {user_id})")
+        logging.info(f"📤 กำลังส่งคำตอบกลับไปยัง LINE")
+        logging.info(f"   User ID: {user_id}")
+        logging.info(f"   User ID Type: {type(user_id)}")
+        logging.info(f"   User ID Length: {len(user_id) if user_id else 0}")
         logging.info(f"   Answer Preview: {answer[:100]}...")
+
+        # Validate user_id
+        if not user_id or not isinstance(user_id, str):
+            logging.error(f"❌ Invalid user_id: {user_id}")
+            raise ValueError(f"Invalid user_id: {user_id}")
 
         line_bot_api.push_message(
             user_id,
