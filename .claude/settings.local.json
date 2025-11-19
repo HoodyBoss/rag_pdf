@@ -48,7 +48,9 @@
       "WebFetch(domain:z.ai)",
       "WebFetch(domain:docs.z.ai)",
       "WebSearch",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(git pull:*)",
+      "Bash(pip search:*)"
     ],
     "deny": [],
     "ask": []

@@ -92,6 +92,66 @@ except ImportError as e:
     def logout_current_user():
         return "Authentication not available"
 
+# ===== CONFIGURATION MANAGEMENT =====
+
+# Environment detection
+IS_RAILWAY = os.getenv('RAILWAY_ENVIRONMENT') == 'production' or os.getenv('DYNO') == 'app'
+IS_LOCAL = os.getenv('DEPLOYMENT_ENV') == 'local' or not IS_RAILWAY
+IS_GPU_AVAILABLE = torch.cuda.is_available() and os.getenv('CUDA_VISIBLE_DEVICES') != ''
+
+# Model configuration from environment variables
+CONFIG = {
+    'embedding_model': os.getenv('EMBEDDING_MODEL',
+        'all-MiniLM-L6-v2' if IS_RAILWAY else
+        'intfloat/multilingual-e5-base' if IS_GPU_AVAILABLE else
+        'all-MiniLM-L6-v2'),
+
+    'embedding_device': os.getenv('EMBEDDING_DEVICE',
+        'cpu' if IS_RAILWAY else ('cuda' if IS_GPU_AVAILABLE else 'cpu')),
+
+    'enable_summarization': os.getenv('ENABLE_SUMMARIZATION',
+        'false' if IS_RAILWAY else 'true').lower() == 'true',
+
+    'summarization_model': os.getenv('SUMMARIZATION_MODEL',
+        'StelleX/mt5-base-thaisum-text-summarization'),
+
+    'chunk_size': int(os.getenv('CHUNK_SIZE', '800' if IS_RAILWAY else '1000')),
+    'chunk_overlap': int(os.getenv('CHUNK_OVERLAP', '150' if ISAILWAY else '200')),
+    'max_chunks': int(os.getenv('MAX_CHUNKS', '100' if IS_RAILWAY else '500')),
+
+    'use_gpu': os.getenv('USE_GPU', 'false' if IS_RAILWAY else str(IS_GPU_AVAILABLE).lower()).lower() == 'true',
+    'auto_cleanup_interval': int(os.getenv('AUTO_CLEANUP_INTERVAL', '20' if IS_RAILWAY else '50')),
+}
+
+def apply_environment_config():
+    """Apply environment-specific configurations"""
+    logging.info("="*60)
+    logging.info("🔧 Loading deployment configuration")
+    logging.info(f"📍 Environment: {'Railway' if IS_RAILWAY else 'Local/Other'}")
+    logging.info(f"🧠 Embedding Model: {CONFIG['embedding_model']}")
+    logging.info(f"💾 Device: {CONFIG['embedding_device']}")
+    logging.info(f"📝 Summarization: {'Enabled' if CONFIG['enable_summarization'] else 'Disabled'}")
+    logging.info(f"📦 Chunk Size: {CONFIG['chunk_size']} (overlap: {CONFIG['chunk_overlap']})")
+    logging.info(f"🔢 Max Chunks: {CONFIG['max_chunks']}")
+    logging.info(f"⚡ GPU Usage: {'Enabled' if CONFIG['use_gpu'] else 'Disabled'}")
+    logging.info("="*60)
+
+    # Apply environment-specific optimizations
+    if IS_RAILWAY:
+        logging.info("🚂 Applying Railway optimizations...")
+        os.environ['CUDA_VISIBLE_DEVICES'] = ''
+        os.environ['PYTORCH_ALLOC_CONF'] = 'max_split_size_mb:32'
+        os.environ['OMP_NUM_THREADS'] = '2'
+        os.environ['MKL_NUM_THREADS'] = '2'
+    elif CONFIG['use_gpu'] and IS_GPU_AVAILABLE:
+        logging.info("🚀 GPU optimizations enabled...")
+        torch.cuda.empty_cache()
+    else:
+        logging.info("💻 CPU-only mode...")
+
+# Apply configurations on startup
+apply_environment_config()
+
 # Additional AI Provider imports
 try:
     import openai
@@ -7809,62 +7869,5 @@ IS_RAILWAY = os.getenv('RAILWAY_ENVIRONMENT') == 'production' or os.getenv('DYNO
 IS_LOCAL = os.getenv('DEPLOYMENT_ENV') == 'local' or not IS_RAILWAY
 IS_GPU_AVAILABLE = torch.cuda.is_available() and os.getenv('CUDA_VISIBLE_DEVICES') != ''
 
-# Model configuration from environment variables
-CONFIG = {
-    'embedding_model': os.getenv('EMBEDDING_MODEL',
-        'all-MiniLM-L6-v2' if IS_RAILWAY else
-        'intfloat/multilingual-e5-base' if IS_GPU_AVAILABLE else
-        'all-MiniLM-L6-v2'),
 
-    'embedding_device': os.getenv('EMBEDDING_DEVICE',
-        'cpu' if IS_RAILWAY else ('cuda' if IS_GPU_AVAILABLE else 'cpu')),
-
-    'enable_summarization': os.getenv('ENABLE_SUMMARIZATION',
-        'false' if IS_RAILWAY else 'true').lower() == 'true',
-
-    'summarization_model': os.getenv('SUMMARIZATION_MODEL',
-        'StelleX/mt5-base-thaisum-text-summarization'),
-
-    'chunk_size': int(os.getenv('CHUNK_SIZE', '800' if IS_RAILWAY else '1000')),
-    'chunk_overlap': int(os.getenv('CHUNK_OVERLAP', '150' if IS_RAILWAY else '200')),
-    'max_chunks': int(os.getenv('MAX_CHUNKS', '100' if IS_RAILWAY else '500')),
-
-    'use_gpu': os.getenv('USE_GPU', 'false' if IS_RAILWAY else str(IS_GPU_AVAILABLE).lower()).lower() == 'true',
-    'auto_cleanup_interval': int(os.getenv('AUTO_CLEANUP_INTERVAL', '20' if IS_RAILWAY else '50')),
-}
-
-def apply_environment_config():
-    """Apply environment-specific configurations"""
-    logging.info("="*60)
-    logging.info("🔧 Loading deployment configuration")
-    logging.info(f"📍 Environment: {'Railway' if IS_RAILWAY else 'Local/Other'}")
-    logging.info(f"🧠 Embedding Model: {CONFIG['embedding_model']}")
-    logging.info(f"💾 Device: {CONFIG['embedding_device']}")
-    logging.info(f"📝 Summarization: {'Enabled' if CONFIG['enable_summarization'] else 'Disabled'}")
-    logging.info(f"📦 Chunk Size: {CONFIG['chunk_size']} (overlap: {CONFIG['chunk_overlap']})")
-    logging.info(f"🔢 Max Chunks: {CONFIG['max_chunks']}")
-    logging.info(f"⚡ GPU Usage: {'Enabled' if CONFIG['use_gpu'] else 'Disabled'}")
-    logging.info("="*60)
-
-    # Apply environment-specific optimizations
-    if IS_RAILWAY:
-        logging.info("🚂 Applying Railway optimizations...")
-        os.environ['CUDA_VISIBLE_DEVICES'] = ''
-        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:32'
-        os.environ['OMP_NUM_THREADS'] = '2'
-        os.environ['MKL_NUM_THREADS'] = '2'
-    elif CONFIG['use_gpu'] and IS_GPU_AVAILABLE:
-        logging.info("🚀 GPU optimizations enabled...")
-        torch.cuda.empty_cache()
-    else:
-        logging.info("💻 CPU-only mode...")
-
-# Apply configurations on startup
-apply_environment_config()
-
-# Initialize memory optimizations on startup
-optimize_memory()
-
-logging.info("✅ Configuration loaded successfully")
-logging.info(f"🎯 Ready for {'Railway' if IS_RAILWAY else 'Local'} deployment")
 
