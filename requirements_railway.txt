@@ -1,0 +1,62 @@
+# Railway-optimized requirements for RAG PDF (1GB RAM limit)
+# Only essential packages included for cost optimization
+
+# Core dependencies
+gradio>=3.50.0,<6.0.0
+fastapi>=0.100.0
+uvicorn>=0.20.0,<0.40.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+requests>=2.30.0
+
+# Database and storage
+chromadb>=0.4.0,<1.5.0
+pymongo>=4.0.0,<5.0.0
+numpy>=1.24.0,<2.0.0
+
+# Document processing
+PyMuPDF>=1.23.0,<2.0.0
+python-docx>=1.0.0,<2.0.0
+pillow>=10.0.0,<12.0.0
+
+# Text processing (minimal versions)
+pythainlp>=4.0.0,<6.0.0
+sentence-transformers>=2.0.0,<3.0.0
+
+# Authentication and security
+bcrypt>=4.0.0,<6.0.0
+cryptography>=40.0.0,<50.0.0
+
+# AI Providers (optional - will be skipped if not available)
+openai>=1.0.0,<3.0.0
+google-generativeai>=0.3.0,<1.0.0
+
+# Communication platforms
+line-bot-sdk>=3.0.0,<4.0.0
+discord.py>=2.0.0,<3.0.0
+
+# Memory optimization
+psutil>=5.8.0,<7.0.0
+
+# File handling
+aiofiles>=23.0.0,<25.0.0
+python-multipart>=0.0.6,<0.1.0
+
+# Configuration
+PyYAML>=6.0.0,<7.0.0
+shortuuid>=1.0.0,<2.0.0
+
+# HTTP client
+httpx>=0.24.0,<1.0.0
+
+# ML Libraries (minimal versions, CPU only)
+# torch>=2.0.0,<3.0.0  # Only if needed locally
+# transformers>=4.30.0,<5.0.0  # Heavy, remove if not essential
+
+# Heavy packages removed for Railway memory optimization:
+# - torch, torchvision, torchaudio (2GB+)
+# - transformers (500MB+)
+# - pandas, scipy (large scientific libraries)
+# - onnxruntime (200MB+)
+
+# Use CPU-only inference to save memory
