@@ -116,7 +116,7 @@ CONFIG = {
         'StelleX/mt5-base-thaisum-text-summarization'),
 
     'chunk_size': int(os.getenv('CHUNK_SIZE', '800' if IS_RAILWAY else '1000')),
-    'chunk_overlap': int(os.getenv('CHUNK_OVERLAP', '150' if ISAILWAY else '200')),
+    'chunk_overlap': int(os.getenv('CHUNK_OVERLAP', '150' if IS_RAILWAY else '200')),
     'max_chunks': int(os.getenv('MAX_CHUNKS', '100' if IS_RAILWAY else '500')),
 
     'use_gpu': os.getenv('USE_GPU', 'false' if IS_RAILWAY else str(IS_GPU_AVAILABLE).lower()).lower() == 'true',
