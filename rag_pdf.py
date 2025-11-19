@@ -7806,46 +7806,55 @@ if __name__ == "__main__":
     # On Railway, only Gradio port (7860) is exposed
     # Webhooks need to be started manually from Gradio interface for testing
 
-    # Create and launch appropriate interface with FastAPI routes
+    # Create Gradio interface
     app_interface = create_authenticated_interface()
 
-    # Add webhook routes to Gradio's FastAPI app
+    # Create custom FastAPI app for full control
     if FASTAPI_AVAILABLE:
         try:
-            # Get Gradio's FastAPI app
-            gradio_app = None
-            if hasattr(app_interface, 'app'):
-                gradio_app = app_interface.app
-            elif hasattr(app_interface, 'fastapi_app'):
-                gradio_app = app_interface.fastapi_app
+            from fastapi import FastAPI
+            from gradio.routes import mount_gradio_app
 
-            if gradio_app:
-                # Add webhook routes directly using FastAPI decorators
-                gradio_app.add_api_route(
-                    "/callback",
-                    line_callback_api,
-                    methods=["POST"],
-                    name="line_webhook"
-                )
-                gradio_app.add_api_route(
-                    "/webhook",
-                    facebook_webhook_api,
-                    methods=["GET", "POST"],
-                    name="facebook_webhook"
-                )
-                logging.info("✅ Webhook endpoints (/callback, /webhook) registered to Gradio FastAPI")
-                logging.info(f"   - LINE callback: POST /callback (enabled: {LINE_ENABLED})")
-                logging.info(f"   - Facebook webhook: GET/POST /webhook (enabled: {FB_ENABLED})")
-            else:
-                logging.warning("⚠️ Could not find Gradio FastAPI app to register webhooks")
+            # Create FastAPI app
+            custom_app = FastAPI()
+
+            # Add webhook routes FIRST
+            custom_app.add_api_route(
+                "/callback",
+                line_callback_api,
+                methods=["POST"],
+                name="line_webhook"
+            )
+            custom_app.add_api_route(
+                "/webhook",
+                facebook_webhook_api,
+                methods=["GET", "POST"],
+                name="facebook_webhook"
+            )
+            logging.info("✅ Webhook endpoints (/callback, /webhook) registered to FastAPI")
+            logging.info(f"   - LINE callback: POST /callback (enabled: {LINE_ENABLED})")
+            logging.info(f"   - Facebook webhook: GET/POST /webhook (enabled: {FB_ENABLED})")
+
+            # Mount Gradio app to FastAPI
+            custom_app = mount_gradio_app(custom_app, app_interface, path="/")
+
+            # Launch using custom FastAPI app
+            import uvicorn
+            port = int(os.getenv('PORT', 7860))
+            host = os.getenv('HOST', '0.0.0.0')
+            logging.info(f"🚀 Starting server on {host}:{port}")
+            uvicorn.run(custom_app, host=host, port=port)
+
         except Exception as e:
-            logging.error(f"❌ Could not register webhook endpoints: {e}")
+            logging.error(f"❌ Failed to create custom FastAPI app: {e}")
             import traceback
             logging.error(traceback.format_exc())
+            # Fallback to regular Gradio launch
+            logging.info("⚠️ Falling back to regular Gradio launch (webhooks disabled)")
+            app_interface.launch()
     else:
-        logging.warning("⚠️ FastAPI not available - webhook endpoints disabled")
-
-    app_interface.launch()
+        logging.warning("⚠️ FastAPI not available - using regular Gradio launch")
+        app_interface.launch()
 # Wrapper class for authenticated application
 class RAGPDFApplication:
     """Wrapper class for RAG PDF application"""
