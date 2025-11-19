@@ -6455,16 +6455,28 @@ with demo:
             return f"อัปเดตโมเดล LINE OA Bot เป็น {model}"
 
         def start_line_ui():
-            if start_line_bot_thread():
-                return f"LINE OA Bot เริ่มทำงานแล้ว! Webhook URL: http://localhost:{LINE_WEBHOOK_PORT}/callback"
+            """Initialize LINE Bot - webhooks are already running via FastAPI"""
+            if not LINE_ENABLED:
+                return "❌ LINE Bot ถูกปิดใช้งาน กรุณาตั้งค่า LINE_ENABLED=true ใน environment variables"
+
+            if LINE_CHANNEL_ACCESS_TOKEN == "YOUR_LINE_CHANNEL_ACCESS_TOKEN":
+                return "❌ กรุณาตั้งค่า LINE_CHANNEL_ACCESS_TOKEN และ LINE_CHANNEL_SECRET"
+
+            # Setup LINE bot if not already initialized
+            if not line_handler:
+                if setup_line_bot():
+                    # Get Railway URL or local URL
+                    webhook_url = os.getenv('RAILWAY_PUBLIC_DOMAIN', f"http://localhost:7860")
+                    return f"✅ LINE OA Bot พร้อมใช้งาน!\n\nWebhook URL: {webhook_url}/callback\n\nตั้งค่า webhook URL นี้ใน LINE Developers Console"
+                else:
+                    return "❌ ไม่สามารถตั้งค่า LINE Bot ได้ กรุณาตรวจสอบ credentials"
             else:
-                return "ไม่สามารถเริ่ม LINE OA Bot ได้ ตรวจสอบการตั้งค่าใน .env"
+                webhook_url = os.getenv('RAILWAY_PUBLIC_DOMAIN', f"http://localhost:7860")
+                return f"✅ LINE OA Bot ทำงานอยู่แล้ว\n\nWebhook URL: {webhook_url}/callback"
 
         def stop_line_ui():
-            if line_thread and line_thread.is_alive():
-                return "LINE OA Bot หยุดทำงานแล้ว (รีสตาร์ทต้องการ restart โปรแกรม)"
-            else:
-                return "LINE OA Bot ไม่ได้ทำงานอยู่แล้ว"
+            """Note: Webhooks cannot be stopped individually - they run with the main app"""
+            return "ℹ️ Webhook endpoints ทำงานร่วมกับ Gradio app\nไม่สามารถหยุดแยกได้ - ต้อง restart ทั้งโปรแกรม"
 
         start_line_button.click(
             fn=start_line_ui,
@@ -6508,16 +6520,29 @@ with demo:
             return f"อัปเดตโมเดล Facebook Bot เป็น {model}"
 
         def start_fb_ui():
-            if start_facebook_bot_thread():
-                return f"Facebook Bot เริ่มทำงานแล้ว! Webhook URL: {FB_WEBHOOK}"
+            """Initialize Facebook Bot - webhooks are already running via FastAPI"""
+            if not FB_ENABLED:
+                return "❌ Facebook Bot ถูกปิดใช้งาน กรุณาตั้งค่า FB_ENABLED=true ใน environment variables"
+
+            if FB_PAGE_ACCESS_TOKEN == "YOUR_FB_PAGE_ACCESS_TOKEN":
+                return "❌ กรุณาตั้งค่า FB_PAGE_ACCESS_TOKEN และ FB_VERIFY_TOKEN"
+
+            # Setup Facebook bot
+            if setup_facebook_bot():
+                # Get Railway URL or local URL
+                webhook_url = os.getenv('RAILWAY_PUBLIC_DOMAIN', f"http://localhost:7860")
+                return f"""✅ Facebook Messenger Bot พร้อมใช้งาน!
+
+Webhook URL: {webhook_url}/webhook
+Verify Token: {FB_VERIFY_TOKEN}
+
+ตั้งค่า webhook URL และ verify token นี้ใน Facebook App Dashboard"""
             else:
-                return "ไม่สามารถเริ่ม Facebook Bot ได้ ตรวจสอบการตั้งค่าใน .env"
+                return "❌ ไม่สามารถตั้งค่า Facebook Bot ได้ กรุณาตรวจสอบ credentials"
 
         def stop_fb_ui():
-            if fb_thread and fb_thread.is_alive():
-                return "Facebook Bot หยุดทำงานแล้ว (รีสตาร์ทต้องการ restart โปรแกรม)"
-            else:
-                return "Facebook Bot ไม่ได้ทำงานอยู่แล้ว"
+            """Note: Webhooks cannot be stopped individually - they run with the main app"""
+            return "ℹ️ Webhook endpoints ทำงานร่วมกับ Gradio app\nไม่สามารถหยุดแยกได้ - ต้อง restart ทั้งโปรแกรม"
 
         start_fb_button.click(
             fn=start_fb_ui,
