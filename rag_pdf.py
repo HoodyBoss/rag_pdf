@@ -5668,7 +5668,7 @@ def export_feedback():
 # ==================== END FEEDBACK FUNCTIONS ====================
 
 
-def chatbot_interface(history: List[Dict], llm_model: str, ai_provider: str = "ollama", show_source: bool = False, formal_style: bool = False,
+def chatbot_interface(history: List[Dict], llm_model: str, ai_provider: str = "gemini", show_source: bool = False, formal_style: bool = False,
                        send_to_discord: bool = False, send_to_line: bool = False, send_to_facebook: bool = False,
                        line_user_id: str = "", fb_user_id: str = "", use_graph_reasoning: bool = False,
                        reasoning_mode: str = "hybrid", multi_hop_enabled: bool = False, hop_count: int = 2):
@@ -7440,9 +7440,9 @@ Verify Token: {FB_VERIFY_TOKEN}
             print(f"Provider: {provider}, Models: {models}, Default: {default_model}")  # Debug
             return gr.update(choices=models, value=default_model), provider, default_model
 
-        # Start with Ollama models - no blocking operations
-        initial_models = get_provider_models("ollama")
-        initial_default_model = AI_PROVIDERS["ollama"]["default_model"] if initial_models else None
+        # Start with Gemini models - best for Railway deployment
+        initial_models = get_provider_models("gemini")
+        initial_default_model = AI_PROVIDERS["gemini"]["default_model"] if initial_models else None
 
         model_selector = gr.Dropdown(
             choices=initial_models,
