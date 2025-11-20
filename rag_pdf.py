@@ -226,7 +226,7 @@ AI_PROVIDERS = {
         "name": "Ollama (Local)",
         "models": AVAILABLE_MODELS,
         "api_key_required": False,
-        "default_model": "gemma3:latest"
+        "default_model": "gemini-2.5-flash"  # Changed from gemma3:latest (not available on Railway)
     },
     "minimax": {
         "name": "Minimax",
@@ -3561,9 +3561,9 @@ def filter_relevant_contexts(question: str, documents: list, metadatas: list, mi
     return filtered_contexts[:max_contexts]
 
 
-def query_rag(question: str, chat_llm: str = "gemma3:latest", ai_provider: str = "ollama", show_source: bool = False, formal_style: bool = False):
+def query_rag(question: str, chat_llm: str = "gemini-2.5-flash", ai_provider: str = "gemini", show_source: bool = False, formal_style: bool = False):
     """
-    ค้นหาในระบบ Enhanced RAG และสร้างคำตอบแบบ streaming โดยใช้ Ollama
+    ค้นหาในระบบ Enhanced RAG และสร้างคำตอบแบบ streaming โดยใช้ Gemini (default)
     """
     global summarize, enhanced_rag
 
