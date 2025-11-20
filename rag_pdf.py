@@ -4853,7 +4853,7 @@ class ImprovedStandardRAG:
         self.cache_size = cache_size
         self.question_cache = {}  # Simple in-memory cache
         self.fallback_responses = [
-            "ขออภัยครับ ผมค้นหาข้อมูลเรื่องนี้ไม่เจอจริงๆ ลองเปลี่ยนคำถามหรือใช้คำค้นหาอื่นดูไหมครับ เผื่อผมจะช่วยหาคำตอบได้ครับ"
+            "ขออภัยครับ ผมค้นหาข้อมูลเรื่องนี้ไม่เจอจริงๆ ลองเปลี่ยนคำถามหรือใช้คำค้นหาอื่นดูไหมครับ เผื่อผมจะช่วยหาคำตอบได้ครับหรือรอ admin ตอบกลับ"
         ]
 
     def get_similar_questions(self, question: str, limit: int = 3) -> list:
